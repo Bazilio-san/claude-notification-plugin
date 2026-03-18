@@ -1,0 +1,13 @@
+{
+  "name": "claude-notification-plugin",
+  "version": "1.0.122",
+  "description": "Claude Code task-completion notifications: Telegram, desktop notifications (Windows/macOS/Linux), sound, and voice",
+  "author": {
+    "name": "Viacheslav Makarov",
+    "email": "npmjs@bazilio.ru"
+  },
+  "homepage": "https://github.com/Bazilio-san/claude-notification-plugin#readme",
+  "repository": "https://github.com/Bazilio-san/claude-notification-plugin",
+  "license": "MIT",
+  "keywords": ["notification", "telegram", "windows", "sound", "voice", "hooks"]
+}

@@ -1,0 +1,94 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+_logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Misc
+Thumbs.db
+
+# Files formed by Realtime
+/_files/
+/_cache/
+/cache/
+/_data/
+
+# DEV directories
+.tmp/
+temp/
+/__misc/
+**/_tmp/
+**/_sand/
+_temp/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Keep example env file
+!.env.example
+
+# OS specific files
+.github
+
+# Private exceptions
+/config/local.*
+local-*.*
+/t.*
+*.local.*
+*.private.*
+**/ignor.*
+**/ignore.*
+**/*.ignore/**
+~$*.*
+*.rar
+
+# API response logs for testing
+_logs/
+/config.yaml
+vectors.txt
+
+/_misc_/
+glm.ps1
+glm.sh
+/.playwright-mcp/
+/.venv/
+/.serena
+/_prompts/
+/.npmrc
+/_test_webhook_server/
+/commit-sha

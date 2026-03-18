@@ -1,0 +1,58 @@
+{
+  "name": "claude-notification-plugin",
+  "productName": "claude-notification-plugin",
+  "version": "1.0.122",
+  "description": "Claude Code task-completion notifications: Telegram, desktop notifications (Windows/macOS/Linux), sound, and voice",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    ".claude-plugin/",
+    "bin/",
+    "hooks/",
+    "listener/",
+    "notifier/",
+    "commit-sha",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "claude-notify": "bin/cli.js"
+  },
+  "scripts": {
+    "prepack": "git rev-parse HEAD > commit-sha",
+    "postinstall": "node bin/install.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix ."
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "notifications",
+    "telegram",
+    "hooks",
+    "macos",
+    "linux",
+    "cross-platform"
+  ],
+  "author": {
+    "name": "Viacheslav Makarov",
+    "email": "npmjs@bazilio.ru"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bazilio-san/claude-notification-plugin.git"
+  },
+  "homepage": "https://github.com/Bazilio-san/claude-notification-plugin#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "node-notifier": "^10.0.1"
+  },
+  "devDependencies": {
+    "eslint-plugin-import": "^2.31.0"
+  }
+}
