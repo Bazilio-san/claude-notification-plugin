@@ -176,12 +176,12 @@ function stopListenerIfRunning () {
   return stopped;
 }
 
+console.log('\nUninstalling Claude Notification Plugin...\n');
+
 // Stop listener daemon if running
-const listenerStopped = stopListenerIfRunning();
+stopListenerIfRunning();
 
 // Remove hooks from settings.json
-let hooksRemoved = false;
-let hooksRemoveError = '';
 if (fs.existsSync(settingsPath)) {
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -235,12 +235,13 @@ if (fs.existsSync(settingsPath)) {
         matchers.some((m) => m.hooks?.some((h) => isPluginHookCommand(h.command))),
       )
       : false;
-    hooksRemoved = hadPluginHooks && !remainingPluginHooks;
-    if (hadPluginHooks && remainingPluginHooks) {
-      hooksRemoveError = 'Hooks still present in settings.json after removal attempt';
+    if (hadPluginHooks && !remainingPluginHooks) {
+      console.log('Hooks removed from settings.json');
+    } else if (hadPluginHooks && remainingPluginHooks) {
+      console.warn('Warning: hooks still present in settings.json after removal attempt');
     }
   } catch (err) {
-    hooksRemoveError = `Failed to update settings.json: ${err.message}`;
+    console.error(`Error: failed to update settings.json: ${err.message}`);
   }
 }
 
@@ -250,12 +251,12 @@ const listenerLogFile = path.join(claudeDir, '.cc-n-listener.log');
 for (const file of [configPath, statePath, resolverPath, pidFile, listenerLogFile]) {
   if (fs.existsSync(file)) {
     fs.unlinkSync(file);
+    console.log(`Removed ${path.basename(file)}`);
   }
 }
 
 // Remove CLI wrapper script
 const WRAPPER_NAMES = ['claude-notify'];
-let cliBinsRemoved = false;
 const ext = process.platform === 'win32' ? '.cmd' : '';
 
 // Collect directories to check for wrapper scripts
@@ -278,21 +279,20 @@ for (const dir of wrapperDirs) {
     const filePath = path.join(dir, `${name}${ext}`);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
-      cliBinsRemoved = true;
+      console.log(`Removed CLI wrapper: ${filePath}`);
     }
   }
 }
 
 // Remove from installed_plugins.json
 const installedPluginsPath = path.join(claudeDir, 'plugins', 'installed_plugins.json');
-let pluginEntryRemoved = false;
 if (fs.existsSync(installedPluginsPath)) {
   try {
     const data = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
     if (data.plugins?.[PLUGIN_KEY]) {
       delete data.plugins[PLUGIN_KEY];
       fs.writeFileSync(installedPluginsPath, JSON.stringify(data, null, 2));
-      pluginEntryRemoved = true;
+      console.log('Removed plugin from installed_plugins.json');
     }
   } catch {
     // ignore
@@ -333,40 +333,16 @@ try {
 
 // Remove plugin cache
 const pluginCacheDir = path.join(claudeDir, 'plugins', 'cache', 'bazilio-plugins', 'claude-notification-plugin');
-let cacheRemoved = false;
 if (fs.existsSync(pluginCacheDir)) {
   fs.rmSync(pluginCacheDir, { recursive: true, force: true });
-  cacheRemoved = !fs.existsSync(pluginCacheDir);
+  if (fs.existsSync(pluginCacheDir)) {
+    console.warn(`Warning: could not fully remove plugin cache directory:\n  ${pluginCacheDir}\nPlease remove it manually.`);
+  } else {
+    console.log('Removed plugin cache');
+  }
 }
 
-const hooksStatus = hooksRemoved
-  ? 'Hooks removed from settings.json'
-  : hooksRemoveError
-    ? `Warning: ${hooksRemoveError}`
-    : 'No hooks found in settings.json';
-
-const extras = [
-  listenerStopped ? 'Listener daemon stopped.' : '',
-  pluginEntryRemoved || cacheRemoved ? 'Plugin registration cleaned.' : '',
-  cliBinsRemoved ? 'CLI wrapper scripts removed.' : '',
-].filter(Boolean).join('\n');
-
-const cacheStillExists = fs.existsSync(pluginCacheDir);
-if (cacheStillExists) {
-  console.log(`
-Warning: Could not fully remove plugin cache directory:
-  ${pluginCacheDir}
-Please remove it manually.
-${hooksStatus}
-Config files deleted.${extras ? `\n${extras}` : ''}
-`);
-} else {
-  console.log(`
-Claude Notification Plugin uninstalled.
-${hooksStatus}
-Config files deleted.${extras ? `\n${extras}` : ''}
-`);
-}
+console.log('\nDone.\n');
 
 // If run manually (not via npm lifecycle), remove the global npm package too
 if (!process.env.npm_lifecycle_event) {
