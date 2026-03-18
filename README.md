@@ -18,13 +18,6 @@ Sends alerts to Telegram and desktop (Windows, macOS, Linux) when Claude finishe
 - Skips short tasks (< 15s by default)
 - Per-channel enable/disable (globally and per-project)
 
-## Install
-
-```bash
-npm install -g claude-notification-plugin
-```
-
-
 ## Telegram Setup
 
 If you plan to work with Telegram, you need to pre-register the bot and send a message to it
@@ -34,15 +27,20 @@ If you plan to work with Telegram, you need to pre-register the bot and send a m
 3. Copy the bot token (format: `123456789:ABCdef...`)
 4. **Send any message to your new bot**
 
+## Install
+
+```bash
+npm install -g claude-notification-plugin --foreground-scripts
+```
 
 ## Setup
+
+If npm install was run without the --foreground-scripts switch, or if you need to reconfigure
+The installer prompts for Telegram bot credentials and sets everything up.
 
 ```bash
 claude-notify install
 ```
-
-The installer prompts for Telegram bot credentials and sets everything up.
-Re-run `claude-notify install` anytime to reconfigure.
 
 ## Uninstall
 
