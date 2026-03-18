@@ -318,6 +318,12 @@ try {
       if (marketplaces[MARKETPLACE_KEY]) {
         delete marketplaces[MARKETPLACE_KEY];
         fs.writeFileSync(knownMarketplacesPath, JSON.stringify(marketplaces, null, 2));
+        console.log(`Removed marketplace "${MARKETPLACE_KEY}" from known_marketplaces.json`);
+      }
+      const marketplaceDir = path.join(claudeDir, 'plugins', 'marketplaces', MARKETPLACE_KEY);
+      if (fs.existsSync(marketplaceDir)) {
+        fs.rmSync(marketplaceDir, { recursive: true, force: true });
+        console.log(`Removed marketplace directory: ${marketplaceDir}`);
       }
     }
   }
