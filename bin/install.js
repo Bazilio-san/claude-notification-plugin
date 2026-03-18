@@ -423,6 +423,9 @@ async function main () {
 
   // 0. Stop listener if running (before overwriting files)
   const listenerWasStopped = stopListenerIfRunning();
+  if (listenerWasStopped) {
+    console.log('  Listener daemon stopped');
+  }
 
   // 1. Register plugin in Claude Code
   const version = getVersion();
@@ -578,6 +581,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.log(`  Config saved: ${configPath}`);
 
   // 4. Register hooks
   let settings = {};
@@ -593,6 +597,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   // Register plugin as enabled
   settings.enabledPlugins = settings.enabledPlugins || {};
   settings.enabledPlugins[PLUGIN_KEY] = true;
+  console.log('  Registered plugin in enabledPlugins');
 
   // When the plugin is enabled, Claude Code loads hooks from hooks/hooks.json automatically.
   // Remove any duplicate hooks from settings.json to avoid double notifications.
@@ -600,6 +605,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   removeHook(settings, 'UserPromptSubmit');
   removeHook(settings, 'Stop');
   removeHook(settings, 'Notification');
+  console.log('  Cleaned duplicate hooks from settings.json');
 
   // Register marketplace
   settings.extraKnownMarketplaces = settings.extraKnownMarketplaces || {};
@@ -609,8 +615,10 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
       repo: MARKETPLACE_GITHUB,
     },
   };
+  console.log('  Registered marketplace in extraKnownMarketplaces');
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  console.log(`  Settings saved: ${settingsPath}`);
 
   // 5. Summary
   const telegramStatus = config.telegram.token && config.telegram.chatId
@@ -626,11 +634,9 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   sudo apt install espeak`;
   }
 
-  const listenerLine = listenerWasStopped ? '\nListener was stopped (restart manually if needed).' : '';
-
   console.log(`
 Installed!
-${listenerLine}
+
 Plugin hooks (via hooks/hooks.json):
   - UserPromptSubmit (start timer)
   - Stop (task finished)
