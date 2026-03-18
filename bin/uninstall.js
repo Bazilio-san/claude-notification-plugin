@@ -215,6 +215,7 @@ if (fs.existsSync(settingsPath)) {
       if (Object.keys(settings.enabledPlugins).length === 0) {
         delete settings.enabledPlugins;
       }
+      console.log('Removed plugin from enabledPlugins in settings.json');
     }
 
     // Remove marketplace from extraKnownMarketplaces
@@ -223,6 +224,7 @@ if (fs.existsSync(settingsPath)) {
       if (Object.keys(settings.extraKnownMarketplaces).length === 0) {
         delete settings.extraKnownMarketplaces;
       }
+      console.log('Removed marketplace from extraKnownMarketplaces in settings.json');
     }
 
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -236,7 +238,7 @@ if (fs.existsSync(settingsPath)) {
       )
       : false;
     if (hadPluginHooks && !remainingPluginHooks) {
-      console.log('Hooks removed from settings.json');
+      console.log('Removed hooks from settings.json');
     } else if (hadPluginHooks && remainingPluginHooks) {
       console.warn('Warning: hooks still present in settings.json after removal attempt');
     }
