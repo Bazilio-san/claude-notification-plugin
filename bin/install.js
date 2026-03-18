@@ -475,7 +475,7 @@ Claude Notification Plugin - Setup
 `);
 
     if (existingToken) {
-      const masked = existingToken.slice(0, 6) + '...' + existingToken.slice(-4);
+      const masked = existingToken.slice(0, 10) + '...' + existingToken.slice(-10);
       console.log(`Telegram token found: ${masked}`);
       const reuse = await ask(rl, 'Keep existing token? (Y/n): ');
       if (reuse.toLowerCase() === 'n') {
