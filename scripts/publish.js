@@ -119,13 +119,13 @@ if (existsSync(marketplacePathFile)) {
             .replace('|--------|-------------|', '|--------|---------|-------------|');
           // Update existing plugin rows: | [name](url) | desc | -> | [name](url) | ver | desc |
           readme = readme.replace(
-            /\| (\[claude-notification-plugin\]\([^)]+\)) \| (.+) \|/,
+            /\| (\[claude-notification-plugin]\([^)]+\)) \| (.+) \|/,
             `| $1 | ${newVersion} | $2 |`,
           );
         } else {
           // Version column exists — update the version value
           readme = readme.replace(
-            /\| (\[claude-notification-plugin\]\([^)]+\)) \| [\d.]+ \|/,
+            /\| (\[claude-notification-plugin]\([^)]+\)) \| [\d.]+ \|/,
             `| $1 | ${newVersion} |`,
           );
         }

@@ -137,8 +137,8 @@ runner.on('complete', async (workDir, task, output) => {
 
   // Build result: try replying to user's original message without duplicating the task text.
   // If reply fails (user deleted their message), resend with task text included.
-  const headerShort = `✅ [${label}] Done:`;
-  const headerFull = `✅ [${label}] Done: ${escapeHtml(task.text)}`;
+  const headerShort = `✅  <code>${label}</code> Done:`;
+  const headerFull = `✅  <code>${label}</code> Done: ${escapeHtml(task.text)}`;
   let body = '';
   if (output) {
     if (output.length > 20000) {
