@@ -641,6 +641,13 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     }
   }
 
+  // Ensure listener.claudeArgs has --model (default: opus)
+  const ca = config.listener.claudeArgs || [];
+  if (!ca.includes('--model')) {
+    ca.push('--model', 'opus');
+    config.listener.claudeArgs = ca;
+  }
+
   if (token) {
     config.telegram.token = token;
   }
