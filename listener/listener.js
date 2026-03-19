@@ -85,6 +85,8 @@ if (Object.keys(validatedProjects).length === 0) {
 
 config.listener.projects = validatedProjects;
 const listenerConfig = config.listener;
+const globalClaudeArgs = listenerConfig.claudeArgs || [];
+const continueSessionEnabled = listenerConfig.continueSession !== false; // default: true
 const taskTimeoutMinutes = listenerConfig.taskTimeoutMinutes || 30;
 const taskTimeout = taskTimeoutMinutes * 60_000;
 
@@ -102,8 +104,14 @@ const worktreeManager = new WorktreeManager(config, logger);
 
 const startTime = Date.now();
 
+// Session tracking per workDir: { taskCount, lastSessionId, lastContextPct }
+const sessions = new Map();
+// WorkDirs that should start a fresh session on next task
+const freshSessionDirs = new Set();
+
 logger.info('Listener started');
 logger.info(`Projects: ${JSON.stringify(Object.keys(listenerConfig.projects))}`);
+logger.info(`Session continuity: ${continueSessionEnabled ? 'enabled' : 'disabled'}`);
 
 // ----------------------
 // DISCOVER WORKTREES ON START
@@ -128,17 +136,46 @@ for (const { workDir, next } of recovered) {
 // TASK RUNNER EVENTS
 // ----------------------
 
-runner.on('complete', async (workDir, task, output) => {
+runner.on('complete', async (workDir, task, result) => {
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
 
   // Delete the "Running" message
   await poller.deleteMessage(task.runningMessageId);
 
-  // Build result: try replying to user's original message without duplicating the task text.
-  // If reply fails (user deleted their message), resend with task text included.
-  const headerShort = `✅  <code>${label}</code>`;
-  const headerFull = `✅  <code>${label}</code>\n\n${escapeHtml(task.text)}`;
+  // Update session tracking
+  const session = sessions.get(workDir) || { taskCount: 0 };
+  session.taskCount++;
+  session.lastSessionId = result.sessionId || session.lastSessionId;
+  if (result.contextWindow && result.totalTokens) {
+    session.lastContextPct = Math.round((result.totalTokens / result.contextWindow) * 100);
+  }
+  sessions.set(workDir, session);
+
+  // Build session info line
+  const sessionParts = [];
+  if (task.continueSession) {
+    sessionParts.push(`#${session.taskCount}`);
+  }
+  if (result.durationMs) {
+    sessionParts.push(formatDuration(result.durationMs));
+  }
+  if (result.numTurns > 1) {
+    sessionParts.push(`${result.numTurns} turns`);
+  }
+  if (session.lastContextPct) {
+    sessionParts.push(`ctx ${session.lastContextPct}%`);
+  }
+  if (result.cost) {
+    sessionParts.push(`$${result.cost.toFixed(2)}`);
+  }
+  const sessionInfo = sessionParts.length > 0 ? `  (${sessionParts.join(', ')})` : '';
+  const sessionIcon = task.continueSession ? '🔄' : '🆕';
+
+  // Build result
+  const output = result.text || '';
+  const headerShort = `✅ ${sessionIcon} <code>${label}</code>${sessionInfo}`;
+  const headerFull = `${headerShort}\n\n${escapeHtml(task.text)}`;
   let body = '';
   if (output) {
     if (output.length > 20000) {
@@ -221,11 +258,41 @@ function formatLabel (entry) {
   return `/${entry.project}`;
 }
 
+function getClaudeArgs (projectAlias) {
+  const project = listenerConfig.projects[projectAlias];
+  const projectArgs = (typeof project === 'object' && project.claudeArgs) || [];
+  // Project-level args override global args
+  return projectArgs.length > 0 ? projectArgs : globalClaudeArgs;
+}
+
+function shouldContinueSession (workDir) {
+  if (!continueSessionEnabled) {
+    return false;
+  }
+  if (freshSessionDirs.has(workDir)) {
+    freshSessionDirs.delete(workDir);
+    return false;
+  }
+  return sessions.has(workDir);
+}
+
 async function startTask (workDir, task) {
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
-  const runningShort = `⏳ <code>${label}</code>\nRunning...`;
-  const runningFull = `⏳ <code>${label}</code>\nRunning: ${escapeHtml(task.text)}`;
+  const continueSession = shouldContinueSession(workDir);
+  const session = sessions.get(workDir);
+
+  // Build running message with session info
+  let sessionTag = '';
+  if (continueSession && session) {
+    const ctxPart = session.lastContextPct ? `, ctx ${session.lastContextPct}%` : '';
+    sessionTag = ` 🔄 #${session.taskCount + 1}${ctxPart}`;
+  } else {
+    sessionTag = ' 🆕';
+  }
+
+  const runningShort = `⏳ <code>${label}</code>${sessionTag}\nRunning...`;
+  const runningFull = `⏳ <code>${label}</code>${sessionTag}\nRunning: ${escapeHtml(task.text)}`;
   let runningMsgId = null;
 
   if (task.telegramMessageId) {
@@ -239,8 +306,9 @@ async function startTask (workDir, task) {
   }
 
   task.runningMessageId = runningMsgId;
+  const claudeArgs = getClaudeArgs(entry?.project);
   try {
-    const started = runner.run(workDir, task);
+    const started = runner.run(workDir, task, claudeArgs, continueSession);
     queue.markStarted(workDir, started.pid);
   } catch (err) {
     logger.error(`Failed to start task: ${err.message}`);
@@ -273,6 +341,8 @@ async function handleCommand (cmd, args) {
       return handleDrop(args);
     case '/clear':
       return handleClear(args);
+    case '/newsession':
+      return handleNewSession(args);
     case '/projects':
       return handleProjects();
     case '/worktrees':
@@ -444,7 +514,38 @@ function handleClear (args) {
 
   const count = queue.clearQueue(workDir);
   const label = branch ? `/${projectAlias}/${branch}` : `/${projectAlias}`;
-  return `🧹 [${escapeHtml(label)}] Queue cleared (${count} tasks)`;
+
+  // Also reset session
+  sessions.delete(workDir);
+  freshSessionDirs.add(workDir);
+  logger.info(`Session reset for ${workDir} via /clear`);
+
+  return `🧹 [${escapeHtml(label)}] Queue cleared (${count} tasks), session reset`;
+}
+
+function handleNewSession (args) {
+  const target = parseTarget(args);
+  const projectAlias = target?.project || 'default';
+  const branch = target?.branch || null;
+
+  let workDir;
+  try {
+    workDir = worktreeManager.resolveWorkDir(projectAlias, branch);
+  } catch (err) {
+    return `❌ ${escapeHtml(err.message)}`;
+  }
+
+  const label = branch ? `/${projectAlias}/${branch}` : `/${projectAlias}`;
+  const session = sessions.get(workDir);
+
+  sessions.delete(workDir);
+  freshSessionDirs.add(workDir);
+  logger.info(`Session reset for ${workDir} via /newsession`);
+
+  if (session) {
+    return `🆕 [${escapeHtml(label)}] Session reset (was #${session.taskCount} tasks, ctx ${session.lastContextPct || '?'}%). Next task starts fresh.`;
+  }
+  return `🆕 [${escapeHtml(label)}] Next task will start a new session.`;
 }
 
 function handleProjects () {
@@ -560,7 +661,8 @@ function handleHelp () {
 /queue — all queues
 /cancel [/project[/branch]] — cancel task
 /drop /project N — remove task from queue
-/clear /project[/branch] — clear queue
+/clear /project[/branch] — clear queue + reset session
+/newsession [/project[/branch]] — reset session (keep queue)
 /projects — list projects
 /worktrees /project — project worktrees
 /worktree /project/branch — create worktree
@@ -572,7 +674,11 @@ function handleHelp () {
 <b>Tasks:</b>
 <code>/project task</code> — main worktree
 <code>/project/branch task</code> — worktree
-<code>task</code> — default project`;
+<code>task</code> — default project
+
+<b>Session:</b>
+🆕 = new session, 🔄 = continuing session
+ctx N% = context window usage`;
 }
 
 // ----------------------

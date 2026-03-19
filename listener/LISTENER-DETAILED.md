@@ -220,7 +220,7 @@ TelegramPoller.getUpdates()
 MessageParser.parse(text)
        │
        ├─ Starts with "/"? ──► Command
-       │    ├─ /status, /queue, /cancel, /drop, /clear
+       │    ├─ /status, /queue, /cancel, /drop, /clear, /newsession
        │    ├─ /projects, /worktrees, /worktree, /rmworktree
        │    ├─ /history, /help, /stop
        │    └─ Execute → reply in Telegram
@@ -307,12 +307,15 @@ Full example of `~/.claude/claude-notify.config.json` with the listener section:
     "deleteAfterHours": 24
   },
   "listener": {
+    "claudeArgs": ["--permission-mode", "auto"],
+    "continueSession": true,
     "projects": {
       "default": {
         "path": "/home/user/main-project"
       },
       "api": {
         "path": "/home/user/projects/api-server",
+        "claudeArgs": ["--permission-mode", "bypassPermissions", "--model", "opus"],
         "worktrees": {
           "feature/auth": "/home/user/projects/api-wt-auth"
         }
@@ -336,7 +339,9 @@ Full example of `~/.claude/claude-notify.config.json` with the listener section:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `projects` | — (required) | Map of projects: `alias → { path, worktrees? }` |
+| `projects` | — (required) | Map of projects: `alias → { path, worktrees?, claudeArgs? }` |
+| `claudeArgs` | `[]` | Extra CLI args passed to `claude -p` (e.g. `["--permission-mode", "auto"]`). Can also be set per-project to override |
+| `continueSession` | `true` | Continue previous session context per workDir. Claude remembers previous tasks. Use `/newsession` or `/clear` to reset |
 | `worktreeBaseDir` | `~/.claude/worktrees` | Where auto-created worktrees are stored |
 | `autoCreateWorktree` | `true` | Automatically create a worktree if the branch is not found |
 | `taskTimeoutMinutes` | `30` | Maximum task execution time in minutes. Force-stopped when exceeded |
@@ -630,14 +635,26 @@ Bot: 🗑 Removed from queue: refactor the code
 
 The task number is the position in the queue (starting from 1). You can check numbers with `/queue`.
 
-### /clear — clear the queue
+### /clear — clear the queue and reset session
 
-Removes all tasks from the queue (the active task continues running):
+Removes all tasks from the queue (the active task continues running) and resets the session context.
+The next task will start a fresh Claude session:
 
 ```
 You: /clear /api
-Bot: 🧹 [/api] Queue cleared (3 tasks)
+Bot: 🧹 [/api] Queue cleared (3 tasks), session reset
 ```
+
+### /newsession — reset session context
+
+Resets the session without touching the queue. The next task starts a fresh session:
+
+```
+You: /newsession /api
+Bot: 🆕 [/api] Session reset (was #5 tasks, ctx 42%). Next task starts fresh.
+```
+
+Use this when the context window is getting full or when you want Claude to "forget" previous work and start clean.
 
 ### /projects — list projects
 
@@ -757,16 +774,32 @@ Shows a brief reference for all commands.
 The command that gets executed:
 
 ```bash
-claude -p "your message text from Telegram" --output-format text
+claude -p "your message text from Telegram" --output-format text [claudeArgs...]
 ```
 
 With the working directory (`cwd`) = project/worktree workDir.
 
+Extra CLI arguments can be configured via `claudeArgs` in config (global or per-project).
+Recommended: `["--permission-mode", "auto"]` — allows Claude to use tools (Edit, Bash, Read, etc.) without interactive prompts, matching the quality of a full interactive session.
+
 Claude sees the project files, CLAUDE.md, .claude/settings.json, and everything else as if you had launched it manually in that directory.
+
+### Session continuity
+
+When `continueSession` is enabled (default), the listener adds `--continue` to subsequent tasks in the same workDir. This means Claude remembers previous tasks and their context — just like working in an interactive terminal session.
+
+Messages show session status:
+- `🆕` = new session (first task or after `/newsession`/`/clear`)
+- `🔄 #3` = continuing session, task number 3
+- `ctx 42%` = context window usage (42% filled)
+
+The completion message includes metadata: duration, turns, context usage, cost.
+
+Use `/newsession` to reset the session when context gets full, or `/clear` to reset both queue and session.
 
 ### What is returned to Telegram
 
-All stdout from claude. This is Claude's text response to your task.
+The `result` field from Claude's JSON output — the text response to your task.
 
 Handling long responses:
 - Up to 4096 characters — a single message
@@ -907,6 +940,38 @@ claude-notify listener restart
 
 The watchdog will automatically clear stale tasks on the next startup.
 
+### Claude gives low-quality responses (doesn't edit files, just describes what to do)
+
+By default `claude -p` runs without tool permissions — Claude can't use Edit, Bash, Read, etc.
+Add `claudeArgs` to your listener config:
+
+```json
+"listener": {
+  "claudeArgs": ["--permission-mode", "auto"]
+}
+```
+
+Available permission modes:
+- `auto` — allows tools with smart auto-approval (recommended)
+- `bypassPermissions` — allows everything without any checks (use in trusted environments)
+
+Other useful flags:
+- `--model opus` — force a specific model
+- `--allowedTools "Bash Edit Read Write"` — allow specific tools only
+
+Restart the listener after changing config: `claude-notify listener restart`
+
+### Context window getting full
+
+After many tasks in the same session, the context window fills up and responses may degrade.
+The completion message shows `ctx N%` — when it's above ~80%, consider resetting:
+
+```
+/newsession /project
+```
+
+This starts a fresh session without clearing the task queue. You can also use `/clear` to reset both.
+
 ### Claude can't find project files
 
 Check the path in the config:
@@ -932,6 +997,8 @@ Suppose you have two projects: an API server and a web application.
     "chatId": "987654321"
   },
   "listener": {
+    "claudeArgs": ["--permission-mode", "auto"],
+    "continueSession": true,
     "projects": {
       "api": { "path": "/home/user/projects/api" },
       "web": { "path": "/home/user/projects/web" }

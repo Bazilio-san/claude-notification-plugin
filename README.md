@@ -88,6 +88,8 @@ Config file: `~/.claude/claude-notify.config.json`
         "path": "abs-path-to-project"
       }
     },
+    "claudeArgs": ["--permission-mode", "auto"],
+    "continueSession": true,
     "worktreeBaseDir": "abs-path-to-worktrees-root",
     "autoCreateWorktree": true,
     "taskTimeoutMinutes": 30,
@@ -242,7 +244,8 @@ All commands start with `/` and execute instantly (not queued).
 | `/queue`                      | Show all queues                      |
 | `/cancel /project[/branch]`   | Cancel the active task               |
 | `/drop /project N`            | Remove task N from queue             |
-| `/clear /project[/branch]`    | Clear queue                          |
+| `/clear /project[/branch]`    | Clear queue + reset session          |
+| `/newsession [/project[/branch]]` | Reset session only (keep queue)  |
 | `/projects`                   | List projects and paths              |
 | `/worktrees /project`         | List worktrees                       |
 | `/worktree /project/branch`   | Create a worktree                    |
@@ -256,6 +259,8 @@ All commands start with `/` and execute instantly (not queued).
 | Parameter            | Default               | Description                                         |
 |----------------------|-----------------------|-----------------------------------------------------|
 | `projects`           | (required)            | Map of projects: `alias → { path }`                 |
+| `claudeArgs`         | `[]`                  | Extra CLI args for `claude -p` (e.g. `["--permission-mode", "auto"]`) |
+| `continueSession`    | `true`                | Continue previous session context (`--continue` flag). Claude remembers previous tasks |
 | `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored              |
 | `autoCreateWorktree` | `true`                | Auto-create worktrees for unknown branches           |
 | `taskTimeoutMinutes` | `30`                  | Max task execution time (force-stopped when exceeded)|
@@ -269,6 +274,16 @@ All commands start with `/` and execute instantly (not queued).
 **The queue is tied to the working directory, not the project name:**
 - `/api task` and `/api/feature/auth task` → **different queues** (parallel)
 - `/api task1` and `/api task2` → **same queue** (sequential)
+
+`claudeArgs` can also be set per-project to override the global value:
+```json
+"projects": {
+  "myapp": {
+    "path": "/path/to/myapp",
+    "claudeArgs": ["--permission-mode", "bypassPermissions", "--model", "opus"]
+  }
+}
+```
 
 Worktrees are auto-created when you use `/project/branch` syntax (controlled by `autoCreateWorktree`).
 

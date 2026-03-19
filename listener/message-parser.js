@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const COMMANDS = [
-  '/status', '/queue', '/cancel', '/drop', '/clear',
+  '/status', '/queue', '/cancel', '/drop', '/clear', '/newsession',
   '/projects', '/worktrees', '/worktree', '/rmworktree',
   '/history', '/stop', '/help',
 ];
