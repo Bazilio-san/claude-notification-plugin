@@ -390,9 +390,12 @@ async function sendDesktopNotification (config, message) {
   }
   try {
     const { default: notifier } = await import('node-notifier');
+    const iconPath = new URL('../claude_img/claude.png', import.meta.url).pathname
+      .replace(/^\/([a-zA-Z]:)/, '$1');
     notifier.notify({
       title: 'Claude Code',
       message,
+      icon: iconPath,
       sound: false,
       wait: false,
     });
@@ -676,21 +679,21 @@ process.stdin.on('end', async () => {
     process.exit(0);
   }
 
-  const title = eventType === 'Notification'
-    ? 'Claude waiting for input'
-    : 'Claude finished coding';
+  const statusEmoji = eventType === 'Notification' ? '⏸' : '✅';
+  const desktopStatus = eventType === 'Notification' ? 'Waiting' : 'Finished';
 
   const branch = getBranch(cwd);
-  const branchLine = branch ? `\nBranch: ${branch}` : '';
-  const branchLineHtml = branch ? `\nBranch: <b>${escapeHtml(branch)}</b>` : '';
+  const label = branch ? `@${project}/${branch}` : `@${project}`;
+  const labelHtml = branch
+    ? `@<b>${escapeHtml(project)}</b>/<b>${escapeHtml(branch)}</b>`
+    : `@<b>${escapeHtml(project)}</b>`;
 
   const triggerLine = config.debug ? `\nTrigger: ${eventType}` : '';
 
-  let message =
-    `${title}\n\nProject: ${project}${branchLine}\nDuration: ${duration}s${triggerLine}`;
+  const desktopMessage = `${desktopStatus}: ${label}`;
 
   let telegramMessage =
-    `${escapeHtml(title)}\n\nProject: <b>${escapeHtml(project)}</b>${branchLineHtml}\nDuration: ${duration}s${triggerLine}`;
+    `${statusEmoji} ${labelHtml} (duration: ${duration}s)${triggerLine}`;
 
   if (config.telegram.includeLastCcMessageInTelegram && event.last_assistant_message) {
     const maxLen = 3500;
@@ -702,18 +705,14 @@ process.stdin.on('end', async () => {
   }
 
   if (config.debug) {
-    const debugBlockMd = '\n\n*Debug:*\n'
-      + (config.voice.enabled ? `\nVoice: ${getVoicePhrase(duration)}` : '')
-      + `\n\nHook input:\n\`\`\`json\n${JSON.stringify(event, null, 2)}\n\`\`\``;
     const debugBlockHtml = '\n\n<b>Debug:</b>\n'
       + (config.voice.enabled ? `\nVoice: ${escapeHtml(getVoicePhrase(duration))}` : '')
       + `\n\nHook input:\n<pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre>`;
-    message += debugBlockMd;
     telegramMessage += debugBlockHtml;
   }
 
   await sendWebhook(config, {
-    title,
+    title: `${desktopStatus}: ${label}`,
     project,
     branch: branch || undefined,
     duration,
@@ -722,7 +721,7 @@ process.stdin.on('end', async () => {
     hookEvent: event,
   });
 
-  state._telegramText = `\u{1F916} ${telegramMessage}`;
+  state._telegramText = telegramMessage;
   await sendTelegram(config, state);
   delete state._telegramText;
   if (eventType === 'Stop') {
@@ -730,7 +729,7 @@ process.stdin.on('end', async () => {
   }
   saveState(state);
 
-  await sendDesktopNotification(config, message);
+  await sendDesktopNotification(config, desktopMessage);
   playSound(config);
   speakResult(config, duration);
 });

@@ -48,7 +48,8 @@ claude-notify install
 claude-notify uninstall
 ```
 
-This removes hooks, config, CLI wrappers, plugin registration, and the npm global package.
+This removes hooks, CLI wrappers, plugin registration, and the npm global package.
+Your config file (`~/.claude/claude-notify.config.json`) is preserved so settings survive reinstalls.
 
 ## Configuration
 
@@ -293,7 +294,7 @@ Alternative: add **@userinfobot** to a chat and it will reply with the ID.
 
 ```
 claude-notify install              Reinstall plugin registration, Telegram config, hooks
-claude-notify uninstall            Remove plugin, hooks, config, CLI wrappers
+claude-notify uninstall            Remove plugin, hooks, CLI wrappers (config preserved)
 claude-notify listener <action>    Manage the Telegram Listener daemon
                                    Actions: start, stop, status, setup, logs, restart
 ```

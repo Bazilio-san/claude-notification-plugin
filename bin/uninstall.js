@@ -5,7 +5,7 @@ import path from 'path';
 import { execSync } from 'child_process';
 import {
   HOME, CLAUDE_DIR,
-  CONFIG_PATH, STATE_PATH, PID_PATH, RESOLVER_PATH, LISTENER_LOG_PATH,
+  STATE_PATH, PID_PATH, RESOLVER_PATH, LISTENER_LOG_PATH,
   SETTINGS_PATH, INSTALLED_PLUGINS_PATH, KNOWN_MARKETPLACES_PATH,
   HOOK_COMMAND, PLUGIN_KEY, MARKETPLACE_KEY,
 } from './constants.js';
@@ -241,8 +241,8 @@ if (fs.existsSync(SETTINGS_PATH)) {
   }
 }
 
-// Remove config, state, resolver, and listener files
-for (const file of [CONFIG_PATH, STATE_PATH, RESOLVER_PATH, PID_PATH, LISTENER_LOG_PATH]) {
+// Remove state, resolver, and listener files (config is preserved for reinstall)
+for (const file of [STATE_PATH, RESOLVER_PATH, PID_PATH, LISTENER_LOG_PATH]) {
   if (fs.existsSync(file)) {
     fs.unlinkSync(file);
     console.log(`Removed ${path.basename(file)}`);
