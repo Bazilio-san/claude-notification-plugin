@@ -414,6 +414,37 @@ Press Enter to keep current value shown in [brackets].
   const maxTotalStr = await ask(rl, `Max total tasks [${defaults.maxTotalTasks}]: `);
   L.maxTotalTasks = parsePositiveInt(maxTotalStr, defaults.maxTotalTasks);
 
+  // --- Claude args ---
+  const permModes = ['auto', 'bypassPermissions', 'default', 'acceptEdits', 'plan'];
+  const currentClaudeArgs = L.claudeArgs || ['--permission-mode', 'auto', '--model', 'opus'];
+  const currentPermIdx = currentClaudeArgs.indexOf('--permission-mode');
+  const currentPerm = currentPermIdx >= 0 ? currentClaudeArgs[currentPermIdx + 1] : 'auto';
+  const currentPermNum = permModes.indexOf(currentPerm) + 1 || 1;
+
+  console.log(`
+Permission mode for claude -p (tools access):
+  1. auto — smart auto-approval (recommended)
+  2. bypassPermissions — allow everything (trusted environments)
+  3. default — standard interactive prompts
+  4. acceptEdits — auto-approve edits only
+  5. plan — read-only, no edits`);
+
+  const permInput = await ask(rl, `Choose [${currentPermNum}]: `);
+  const permChoice = parseInt(permInput, 10);
+  const selectedPerm = (permChoice >= 1 && permChoice <= 5) ? permModes[permChoice - 1] : currentPerm;
+
+  // Build claudeArgs preserving non-permission-mode args
+  const newClaudeArgs = ['--permission-mode', selectedPerm];
+  // Preserve --model if present
+  const modelIdx = currentClaudeArgs.indexOf('--model');
+  if (modelIdx >= 0 && currentClaudeArgs[modelIdx + 1]) {
+    newClaudeArgs.push('--model', currentClaudeArgs[modelIdx + 1]);
+  } else {
+    newClaudeArgs.push('--model', 'opus');
+  }
+  L.claudeArgs = newClaudeArgs;
+  console.log(`  → --permission-mode ${selectedPerm}`);
+
   // --- Default project ---
   console.log('');
   const projectInput = await ask(rl, `Default project path [${defaults.projectPath || '(none)'}]: `);

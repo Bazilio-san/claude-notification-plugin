@@ -622,6 +622,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     notifyOnWaiting: false,
     debug: false,
     listener: {
+      claudeArgs: ['--permission-mode', 'auto', '--model', 'opus'],
       projects: {},
       worktreeBaseDir: path.join(HOME, '.claude', 'worktrees'),
       autoCreateWorktree: true,

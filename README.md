@@ -256,18 +256,18 @@ All commands start with `/` and execute instantly (not queued).
 
 ### Listener configuration
 
-| Parameter            | Default               | Description                                         |
-|----------------------|-----------------------|-----------------------------------------------------|
-| `projects`           | (required)            | Map of projects: `alias → { path }`                 |
-| `claudeArgs`         | `[]`                  | Extra CLI args for `claude -p` (e.g. `["--permission-mode", "auto"]`) |
+| Parameter            | Default               | Description                                                                            |
+|----------------------|-----------------------|----------------------------------------------------------------------------------------|
+| `projects`           | (required)            | Map of projects: `alias → { path }`                                                    |
+| `claudeArgs`         | `[]`                  | Extra CLI args for `claude -p` (e.g. `["--permission-mode", "auto"]`)                  |
 | `continueSession`    | `true`                | Continue previous session context (`--continue` flag). Claude remembers previous tasks |
-| `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored              |
-| `autoCreateWorktree` | `true`                | Auto-create worktrees for unknown branches           |
-| `taskTimeoutMinutes` | `30`                  | Max task execution time (force-stopped when exceeded)|
-| `maxQueuePerWorkDir` | `10`                  | Max tasks in queue per working directory              |
-| `maxTotalTasks`      | `50`                  | Max tasks across all queues                          |
-| `logDir`             | `~/.claude`           | Listener log directory                               |
-| `taskLogDir`         | same as `logDir`      | Task Q&A log directory                               |
+| `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored                                                |
+| `autoCreateWorktree` | `true`                | Auto-create worktrees for unknown branches                                             |
+| `taskTimeoutMinutes` | `30`                  | Max task execution time (force-stopped when exceeded)                                  |
+| `maxQueuePerWorkDir` | `10`                  | Max tasks in queue per working directory                                               |
+| `maxTotalTasks`      | `50`                  | Max tasks across all queues                                                            |
+| `logDir`             | `~/.claude`           | Listener log directory                                                                 |
+| `taskLogDir`         | same as `logDir`      | Task Q&A log directory                                                                 |
 
 ### Projects and worktrees
 
