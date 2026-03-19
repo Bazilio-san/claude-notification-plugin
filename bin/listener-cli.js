@@ -378,8 +378,8 @@ async function setupListener () {
     taskTimeoutMinutes: L.taskTimeoutMinutes ?? 30,
     maxQueuePerWorkDir: L.maxQueuePerWorkDir ?? 10,
     maxTotalTasks: L.maxTotalTasks ?? 50,
-    logDir: L.logDir || path.join(home, '.claude'),
-    taskLogDir: L.taskLogDir || path.join(home, '.claude'),
+    logDir: L.logDir || path.join(HOME, '.claude'),
+    taskLogDir: L.taskLogDir || path.join(HOME, '.claude'),
     projectPath: L.projects?.default?.path || '',
   };
 
