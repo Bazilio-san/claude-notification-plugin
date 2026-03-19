@@ -45,9 +45,9 @@ function bumpPatch (version) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
-function replaceFirstVersion (filePath, oldVer, newVer) {
+function setJsonVersion (filePath, newVer) {
   const content = readFileSync(filePath, 'utf-8');
-  writeFileSync(filePath, content.replace(oldVer, newVer), 'utf-8');
+  writeFileSync(filePath, content.replace(/("version"\s*:\s*")[\d.]+(")/,  `$1${newVer}$2`), 'utf-8');
 }
 
 // ── Main ──
@@ -67,11 +67,11 @@ const repoName = pkg.name;
 
 log(c, `**** Bumping version of ${g}${repoName}${c}: ${y}${oldVersion}${c} -> ${g}${newVersion}${c} ****`);
 
-replaceFirstVersion(join(projectRoot, 'package.json'), oldVersion, newVersion);
+setJsonVersion(join(projectRoot, 'package.json'), newVersion);
 
 const pluginJsonPath = join(projectRoot, '.claude-plugin', 'plugin.json');
 if (existsSync(pluginJsonPath)) {
-  replaceFirstVersion(pluginJsonPath, oldVersion, newVersion);
+  setJsonVersion(pluginJsonPath, newVersion);
 }
 
 log(g, `  ${repoName}@${newVersion}`);
@@ -105,7 +105,7 @@ if (existsSync(marketplacePathFile)) {
     if (mpOldVersion) {
       const mpNewVersion = bumpPatch(mpOldVersion);
       log(c, `**** Bumping marketplace version: ${y}${mpOldVersion}${c} -> ${g}${mpNewVersion}${c} ****`);
-      replaceFirstVersion(marketplaceJson, mpOldVersion, mpNewVersion);
+      setJsonVersion(marketplaceJson, mpNewVersion);
 
       // Update plugin version in marketplace README
       const marketplaceReadme = join(marketplaceDir, 'README.md');
