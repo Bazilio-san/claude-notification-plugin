@@ -8,6 +8,7 @@ import {
   STATE_PATH, PID_PATH, RESOLVER_PATH, LISTENER_LOG_PATH,
   SETTINGS_PATH, INSTALLED_PLUGINS_PATH, KNOWN_MARKETPLACES_PATH,
   HOOK_COMMAND, PLUGIN_KEY, MARKETPLACE_KEY,
+  ICO_PATH, SHORTCUT_PATH,
 } from './constants.js';
 
 function isPluginHookCommand (command) {
@@ -242,7 +243,7 @@ if (fs.existsSync(SETTINGS_PATH)) {
 }
 
 // Remove state, resolver, and listener files (config is preserved for reinstall)
-for (const file of [STATE_PATH, RESOLVER_PATH, PID_PATH, LISTENER_LOG_PATH]) {
+for (const file of [STATE_PATH, RESOLVER_PATH, PID_PATH, LISTENER_LOG_PATH, ICO_PATH, SHORTCUT_PATH]) {
   if (fs.existsSync(file)) {
     fs.unlinkSync(file);
     console.log(`Removed ${path.basename(file)}`);

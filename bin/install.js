@@ -10,6 +10,7 @@ import {
   CONFIG_PATH, PID_PATH, RESOLVER_PATH, INSTALL_LOG_PATH,
   SETTINGS_PATH, INSTALLED_PLUGINS_PATH, KNOWN_MARKETPLACES_PATH, MARKETPLACES_DIR,
   HOOK_COMMAND, MARKETPLACE_KEY, PLUGIN_KEY, MARKETPLACE_REPO, MARKETPLACE_GITHUB,
+  ICO_PATH, SHORTCUT_PATH, APP_ID,
 } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -341,6 +342,84 @@ function registerCli () {
 }
 
 // ──────────────────────────────────────
+// Windows Start Menu shortcut (for notification icon)
+// ──────────────────────────────────────
+
+function createWindowsShortcut () {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  try {
+    const icoSrc = path.join(PACKAGE_ROOT, 'claude_img', 'claude.ico');
+    if (!fs.existsSync(icoSrc)) {
+      return;
+    }
+    fs.copyFileSync(icoSrc, ICO_PATH);
+    const ps = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+public class ShortcutHelper {
+  [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellLinkW {
+    void GetPath([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder f,int c,IntPtr d,uint g);
+    void GetIDList(out IntPtr p);void SetIDList(IntPtr p);
+    void GetDescription([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder n,int c);
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string n);
+    void GetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder d,int c);
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string d);
+    void GetArguments([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder a,int c);
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string a);
+    void GetHotkey(out ushort h);void SetHotkey(ushort h);
+    void GetShowCmd(out int s);void SetShowCmd(int s);
+    void GetIconLocation([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder p,int c,out int i);
+    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string p,int i);
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string p,uint r);
+    void Resolve(IntPtr h,uint f);
+    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string p);
+  }
+  [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IPropertyStore {
+    int GetCount(out uint c);int GetAt(uint i,out PROPERTYKEY k);
+    int GetValue(ref PROPERTYKEY k,out PropVariant v);
+    int SetValue(ref PROPERTYKEY k,ref PropVariant v);int Commit();
+  }
+  [StructLayout(LayoutKind.Sequential)] struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+  [StructLayout(LayoutKind.Explicit)] struct PropVariant {
+    [FieldOffset(0)] public ushort vt; [FieldOffset(8)] public IntPtr pwszVal;
+  }
+  [ComImport, Guid("00021401-0000-0000-C000-000000000046")] class ShellLink {}
+  public static void Create(string lnk,string appId,string target,string ico,string desc) {
+    var link=(IShellLinkW)new ShellLink();
+    link.SetPath(target);link.SetIconLocation(ico,0);link.SetDescription(desc);
+    var store=(IPropertyStore)link;
+    var key=new PROPERTYKEY{fmtid=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),pid=5};
+    var pv=new PropVariant();pv.vt=31;pv.pwszVal=Marshal.StringToCoTaskMemUni(appId);
+    store.SetValue(ref key,ref pv);store.Commit();Marshal.FreeCoTaskMem(pv.pwszVal);
+    ((IPersistFile)link).Save(lnk,true);
+  }
+}
+'@
+[ShortcutHelper]::Create('${SHORTCUT_PATH.replace(/'/g, "''")}','${APP_ID}','C:\\Windows\\explorer.exe','${ICO_PATH.replace(/'/g, "''")}','${APP_ID}')
+`;
+    const tmpPs1 = path.join(CLAUDE_DIR, '_shortcut.ps1');
+    fs.writeFileSync(tmpPs1, ps, 'utf-8');
+    try {
+      execSync(
+        `powershell -NoProfile -ExecutionPolicy Bypass -File "${tmpPs1}"`,
+        { stdio: 'ignore' }
+      );
+      console.log('  Windows notification shortcut created');
+    } finally {
+      fs.rmSync(tmpPs1, { force: true });
+    }
+  } catch (err) {
+    console.log(`  Windows shortcut creation skipped: ${err.message}`);
+  }
+}
+
+// ──────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────
 
@@ -433,6 +512,7 @@ async function main () {
   console.log('  Marketplace synced');
 
   registerCli();
+  createWindowsShortcut();
 
   console.log('  Plugin registered.');
 

@@ -25,6 +25,17 @@ export const INSTALLED_PLUGINS_PATH = path.join(PLUGINS_DIR, 'installed_plugins.
 export const KNOWN_MARKETPLACES_PATH = path.join(PLUGINS_DIR, 'known_marketplaces.json');
 export const MARKETPLACES_DIR = path.join(PLUGINS_DIR, 'marketplaces');
 
+// Windows notification shortcut
+export const ICO_FILENAME = 'claude-notify.ico';
+export const ICO_PATH = path.join(CLAUDE_DIR, ICO_FILENAME);
+export const SHORTCUT_NAME = 'Claude Notify.lnk';
+export const SHORTCUT_DIR = path.join(
+  process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'),
+  'Microsoft', 'Windows', 'Start Menu', 'Programs'
+);
+export const SHORTCUT_PATH = path.join(SHORTCUT_DIR, SHORTCUT_NAME);
+export const APP_ID = 'Claude Notify';
+
 // Plugin identity
 export const HOOK_COMMAND = 'claude-notify';
 export const MARKETPLACE_KEY = 'bazilio-plugins';

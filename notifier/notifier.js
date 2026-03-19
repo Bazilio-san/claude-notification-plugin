@@ -363,18 +363,19 @@ async function sendWebhook (config, payload) {
 // DESKTOP NOTIFICATION
 // ----------------------
 
-function sendNativeFallback (config, message) {
+function sendNativeFallback (config, title, message) {
   try {
     switch (PLATFORM) {
       case 'darwin': {
-        const escaped = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        spawn('osascript', ['-e', `display notification "${escaped}" with title "Claude Code"`], {
+        const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const escapedTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        spawn('osascript', ['-e', `display notification "${escapedMsg}" with title "${escapedTitle}"`], {
           stdio: 'ignore',
         });
         break;
       }
       case 'linux':
-        spawn('notify-send', ['Claude Code', message], {
+        spawn('notify-send', [title, message], {
           stdio: 'ignore',
         });
         break;
@@ -384,24 +385,28 @@ function sendNativeFallback (config, message) {
   }
 }
 
-async function sendDesktopNotification (config, message) {
+async function sendDesktopNotification (config, title, message) {
   if (!config.desktopNotification.enabled) {
     return;
   }
   try {
     const { default: notifier } = await import('node-notifier');
-    const iconPath = new URL('../claude_img/claude.png', import.meta.url).pathname
+    let iconPath = new URL('../claude_img/claude.png', import.meta.url).pathname
       .replace(/^\/([a-zA-Z]:)/, '$1');
+    if (PLATFORM === 'win32') {
+      iconPath = path.resolve(iconPath);
+    }
     notifier.notify({
-      title: 'Claude Code',
+      title,
       message,
       icon: iconPath,
       sound: false,
       wait: false,
+      appID: 'Claude Notify',
     });
   } catch (err) {
     debugLog(config, 'node-notifier failed, trying native fallback:', err.message);
-    sendNativeFallback(config, message);
+    sendNativeFallback(config, title, message);
   }
 }
 
@@ -683,14 +688,15 @@ process.stdin.on('end', async () => {
   const desktopStatus = eventType === 'Notification' ? 'Waiting' : 'Finished';
 
   const branch = getBranch(cwd);
-  const label = branch ? `@${project}/${branch}` : `@${project}`;
+  const label = branch ? `/${project}/${branch}` : `/${project}`;
   const labelHtml = branch
-    ? `@<b>${escapeHtml(project)}</b>/<b>${escapeHtml(branch)}</b>`
-    : `@<b>${escapeHtml(project)}</b>`;
+    ? `/<b>${escapeHtml(project)}</b>/<b>${escapeHtml(branch)}</b>`
+    : `/<b>${escapeHtml(project)}</b>`;
 
   const triggerLine = config.debug ? `\nTrigger: ${eventType}` : '';
 
-  const desktopMessage = `${desktopStatus}: ${label}`;
+  const desktopTitle = label;
+  const desktopMessage = desktopStatus;
 
   let telegramMessage =
     `${statusEmoji} ${labelHtml} (duration: ${duration}s)${triggerLine}`;
@@ -729,7 +735,7 @@ process.stdin.on('end', async () => {
   }
   saveState(state);
 
-  await sendDesktopNotification(config, desktopMessage);
+  await sendDesktopNotification(config, desktopTitle, desktopMessage);
   playSound(config);
   speakResult(config, duration);
 });
