@@ -49,7 +49,7 @@ export function createTaskLogger (logDir) {
       const ts = new Date().toISOString();
       const entry = `\n${'='.repeat(80)}\n`
         + `[${ts}] QUESTION\n`
-        + `Project: @${project}${branch && branch !== 'main' && branch !== 'master' ? '/' + branch : ''}\n`
+        + `Project: /${project}${branch && branch !== 'main' && branch !== 'master' ? '/' + branch : ''}\n`
         + `WorkDir: ${workDir}\n`
         + `Task: ${taskText}\n`;
       fs.appendFileSync(logPath, entry);

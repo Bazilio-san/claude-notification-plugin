@@ -195,7 +195,7 @@ Alternatively, add a `listener` section to config manually:
 }
 ```
 
-The `"default"` alias receives messages without a `@project` prefix.
+The `"default"` alias receives messages without a `/project` prefix.
 `api` and `web` are project aliases for easy reference from Telegram.
 
 ### 2. Start the listener
@@ -208,16 +208,16 @@ claude-notify listener start
 
 ```
 fix the login bug                     → runs in "default" project
-@api add pagination to GET /users     → runs in "api" project
-@api/feature/auth implement OAuth2    → runs in a worktree (auto-created)
+/api add pagination to GET /users     → runs in "api" project
+/api/feature/auth implement OAuth2    → runs in a worktree (auto-created)
 ```
 
 The bot replies with status and results:
 
 ```
-⏳ [@api] Running: add pagination to GET /users
+⏳ [/api] Running: add pagination to GET /users
 ...
-✅ [@api] Done: add pagination to GET /users
+✅ [/api] Done: add pagination to GET /users
 <claude's output>
 ```
 
@@ -238,15 +238,15 @@ All commands start with `/` and execute instantly (not queued).
 | Command                       | Description                          |
 |-------------------------------|--------------------------------------|
 | `/status`                     | Status of all projects and worktrees |
-| `/status @project`            | Status of a specific project         |
+| `/status /project`            | Status of a specific project         |
 | `/queue`                      | Show all queues                      |
-| `/cancel @project[/branch]`   | Cancel the active task               |
-| `/drop @project N`            | Remove task N from queue             |
-| `/clear @project[/branch]`    | Clear queue                          |
+| `/cancel /project[/branch]`   | Cancel the active task               |
+| `/drop /project N`            | Remove task N from queue             |
+| `/clear /project[/branch]`    | Clear queue                          |
 | `/projects`                   | List projects and paths              |
-| `/worktrees @project`         | List worktrees                       |
-| `/worktree @project branch`   | Create a worktree                    |
-| `/rmworktree @project branch` | Remove a worktree                    |
+| `/worktrees /project`         | List worktrees                       |
+| `/worktree /project/branch`   | Create a worktree                    |
+| `/rmworktree /project/branch` | Remove a worktree                    |
 | `/history`                    | Recent task history                  |
 | `/stop`                       | Stop the listener                    |
 | `/help`                       | Show help                            |
@@ -267,15 +267,15 @@ All commands start with `/` and execute instantly (not queued).
 ### Projects and worktrees
 
 **The queue is tied to the working directory, not the project name:**
-- `@api task` and `@api/feature/auth task` → **different queues** (parallel)
-- `@api task1` and `@api task2` → **same queue** (sequential)
+- `/api task` and `/api/feature/auth task` → **different queues** (parallel)
+- `/api task1` and `/api task2` → **same queue** (sequential)
 
-Worktrees are auto-created when you use `@project/branch` syntax (controlled by `autoCreateWorktree`).
+Worktrees are auto-created when you use `/project/branch` syntax (controlled by `autoCreateWorktree`).
 
 ```
-/worktree @api feature/payments     ← create
-/worktrees @api                     ← list
-/rmworktree @api feature/payments   ← remove
+/worktree /api/feature/payments     ← create
+/worktrees /api                     ← list
+/rmworktree /api/feature/payments   ← remove
 ```
 
 

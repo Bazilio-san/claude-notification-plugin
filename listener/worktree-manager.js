@@ -269,7 +269,7 @@ export class WorktreeManager {
 
     throw new Error(
       `Worktree "${branch}" not found for project "${projectAlias}". `
-      + `Create it: /worktree @${projectAlias} ${branch}`
+      + `Create it: /worktree /${projectAlias}/${branch}`
     );
   }
 

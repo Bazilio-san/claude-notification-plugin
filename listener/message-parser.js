@@ -11,9 +11,12 @@ const COMMANDS = [
  *
  * Formats:
  *   /command args           → { type: 'command', cmd, args }
- *   @project/branch text    → { type: 'task', project, branch, text }
- *   @project text           → { type: 'task', project, branch: null, text }
+ *   /project/branch text    → { type: 'task', project, branch, text }
+ *   /project text           → { type: 'task', project, branch: null, text }
  *   text                    → { type: 'task', project: 'default', branch: null, text }
+ *
+ * If /word is a known command, it's treated as a command.
+ * Otherwise /word is treated as a project alias.
  */
 export function parseMessage (text) {
   if (!text || typeof text !== 'string') {
@@ -25,10 +28,11 @@ export function parseMessage (text) {
     return null;
   }
 
-  // Check for commands
   if (trimmed.startsWith('/')) {
     const parts = trimmed.split(/\s+/);
     const cmd = parts[0].toLowerCase().replace(/@\w+$/, ''); // strip @botname
+
+    // Known command
     if (COMMANDS.includes(cmd)) {
       return {
         type: 'command',
@@ -36,30 +40,29 @@ export function parseMessage (text) {
         args: parts.slice(1).join(' '),
       };
     }
-  }
 
-  // Check for @project/branch or @project prefix
-  const projectMatch = trimmed.match(/^@(\S+)\s+([\s\S]+)$/);
-  if (projectMatch) {
-    const target = projectMatch[1];
-    const taskText = projectMatch[2].trim();
+    // Not a known command → treat as /project[/branch] task
+    const projectMatch = trimmed.match(/^\/(\S+)\s+([\s\S]+)$/);
+    if (projectMatch) {
+      const target = projectMatch[1];
+      const taskText = projectMatch[2].trim();
 
-    // Split target into project and optional branch
-    const slashIndex = target.indexOf('/');
-    if (slashIndex > 0) {
+      const slashIndex = target.indexOf('/');
+      if (slashIndex > 0) {
+        return {
+          type: 'task',
+          project: target.substring(0, slashIndex),
+          branch: target.substring(slashIndex + 1),
+          text: taskText,
+        };
+      }
       return {
         type: 'task',
-        project: target.substring(0, slashIndex),
-        branch: target.substring(slashIndex + 1),
+        project: target,
+        branch: null,
         text: taskText,
       };
     }
-    return {
-      type: 'task',
-      project: target,
-      branch: null,
-      text: taskText,
-    };
   }
 
   // Plain text → default project
@@ -72,14 +75,14 @@ export function parseMessage (text) {
 }
 
 /**
- * Parse @project or @project/branch from command args.
- * Returns { project, branch } or null.
+ * Parse /project or /project/branch from command args.
+ * Returns { project, branch, rest } or null.
  */
 export function parseTarget (args) {
   if (!args) {
     return null;
   }
-  const match = args.trim().match(/^@(\S+)/);
+  const match = args.trim().match(/^\/(\S+)/);
   if (!match) {
     return null;
   }

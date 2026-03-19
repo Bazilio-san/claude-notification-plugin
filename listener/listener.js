@@ -216,9 +216,9 @@ function formatLabel (entry) {
     return 'unknown';
   }
   if (entry.branch && entry.branch !== 'main' && entry.branch !== 'master') {
-    return `@${entry.project}/${entry.branch}`;
+    return `/${entry.project}/${entry.branch}`;
   }
-  return `@${entry.project}`;
+  return `/${entry.project}`;
 }
 
 async function startTask (workDir, task) {
@@ -358,8 +358,8 @@ function handleQueue () {
   for (const [project, statuses] of Object.entries(all)) {
     for (const s of statuses) {
       const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
-        ? `@${project}/${s.branch}`
-        : `@${project}`;
+        ? `/${project}/${s.branch}`
+        : `/${project}`;
       if (s.active || s.queueLength > 0) {
         text += `\n<b>${escapeHtml(label)}</b>:`;
         if (s.active) {
@@ -392,12 +392,12 @@ async function handleCancel (args) {
   }
 
   if (!runner.isRunning(workDir)) {
-    return `❌ No active task in @${escapeHtml(projectAlias)}${branch ? '/' + escapeHtml(branch) : ''}`;
+    return `❌ No active task in /${escapeHtml(projectAlias)}${branch ? '/' + escapeHtml(branch) : ''}`;
   }
 
   runner.cancel(workDir);
   const next = queue.cancelActive(workDir);
-  const label = branch ? `@${projectAlias}/${branch}` : `@${projectAlias}`;
+  const label = branch ? `/${projectAlias}/${branch}` : `/${projectAlias}`;
 
   if (next) {
     startTask(workDir, next);
@@ -409,7 +409,7 @@ async function handleCancel (args) {
 function handleDrop (args) {
   const target = parseTarget(args);
   if (!target) {
-    return '❌ Usage: /drop @project N';
+    return '❌ Usage: /drop /project N';
   }
   const index = parseInt(target.rest, 10);
   if (!index || index < 1) {
@@ -443,7 +443,7 @@ function handleClear (args) {
   }
 
   const count = queue.clearQueue(workDir);
-  const label = branch ? `@${projectAlias}/${branch}` : `@${projectAlias}`;
+  const label = branch ? `/${projectAlias}/${branch}` : `/${projectAlias}`;
   return `🧹 [${escapeHtml(label)}] Queue cleared (${count} tasks)`;
 }
 
@@ -452,7 +452,7 @@ function handleProjects () {
   let text = '📂 <b>Projects:</b>\n';
   for (const [alias, proj] of Object.entries(projects)) {
     const projPath = typeof proj === 'string' ? proj : proj.path;
-    text += `\n<b>@${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
+    text += `\n<b>/${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
     const worktrees = typeof proj === 'object' ? proj.worktrees : null;
     if (worktrees && Object.keys(worktrees).length > 0) {
       for (const [branch, wtPath] of Object.entries(worktrees)) {
@@ -466,7 +466,7 @@ function handleProjects () {
 function handleWorktrees (args) {
   const target = parseTarget(args);
   if (!target) {
-    return '❌ Usage: /worktrees @project';
+    return '❌ Usage: /worktrees /project';
   }
 
   const result = worktreeManager.listWorktrees(target.project);
@@ -484,11 +484,11 @@ function handleWorktrees (args) {
 
 function handleCreateWorktree (args) {
   const target = parseTarget(args);
-  if (!target || !target.rest) {
-    return '❌ Usage: /worktree @project branch-name';
+  if (!target || !target.branch) {
+    return '❌ Usage: /worktree /project/branch';
   }
 
-  const branch = target.rest;
+  const branch = target.branch;
   try {
     const wtDir = worktreeManager.createWorktree(target.project, branch);
     return `🌿 Created worktree for "<b>${escapeHtml(target.project)}</b>":\n`
@@ -501,11 +501,11 @@ function handleCreateWorktree (args) {
 
 function handleRemoveWorktree (args) {
   const target = parseTarget(args);
-  if (!target || !target.rest) {
-    return '❌ Usage: /rmworktree @project branch-name';
+  if (!target || !target.branch) {
+    return '❌ Usage: /rmworktree /project/branch';
   }
 
-  const branch = target.rest;
+  const branch = target.branch;
 
   // Check if there's an active task in this worktree
   let workDir;
@@ -517,7 +517,7 @@ function handleRemoveWorktree (args) {
   }
 
   if (workDir && runner.isRunning(workDir)) {
-    return `❌ Cannot remove worktree: task is running. First /cancel @${escapeHtml(target.project)}/${escapeHtml(branch)}`;
+    return `❌ Cannot remove worktree: task is running. First /cancel /${escapeHtml(target.project)}/${escapeHtml(branch)}`;
   }
 
   try {
@@ -536,8 +536,8 @@ function handleHistory () {
   let text = '📜 <b>Recent tasks:</b>\n';
   for (const h of history.reverse()) {
     const label = h.branch && h.branch !== 'main' && h.branch !== 'master'
-      ? `@${h.project}/${h.branch}`
-      : `@${h.project}`;
+      ? `/${h.project}/${h.branch}`
+      : `/${h.project}`;
     const status = h.result === 'CANCELLED' ? '🛑' : h.result?.startsWith('ERROR') ? '❌' : '✅';
     text += `\n${status} [${escapeHtml(label)}] ${escapeHtml(h.text)}`;
   }
@@ -556,22 +556,22 @@ function handleHelp () {
   return `<b>📖 Commands:</b>
 
 /status — status of all projects
-/status @project — project status
+/status /project — project status
 /queue — all queues
-/cancel [@project[/branch]] — cancel task
-/drop @project N — remove task from queue
-/clear @project[/branch] — clear queue
+/cancel [/project[/branch]] — cancel task
+/drop /project N — remove task from queue
+/clear /project[/branch] — clear queue
 /projects — list projects
-/worktrees @project — project worktrees
-/worktree @project branch — create worktree
-/rmworktree @project branch — remove worktree
+/worktrees /project — project worktrees
+/worktree /project/branch — create worktree
+/rmworktree /project/branch — remove worktree
 /history — task history
 /stop — stop listener
 /help — this help
 
 <b>Tasks:</b>
-<code>@project task</code> — main worktree
-<code>@project/branch task</code> — worktree
+<code>/project task</code> — main worktree
+<code>/project/branch task</code> — worktree
 <code>task</code> — default project`;
 }
 
@@ -606,7 +606,7 @@ async function handleTask (parsed, telegramMessageId) {
 
   if (autoCreated) {
     await poller.sendMessage(`🌿 Created worktree <b>${escapeHtml(parsed.branch)}</b> for "<b>${escapeHtml(parsed.project)}</b>"`);
-    logger.info(`Auto-created worktree for task: @${parsed.project}/${parsed.branch} → ${workDir}`);
+    logger.info(`Auto-created worktree for task: /${parsed.project}/${parsed.branch} → ${workDir}`);
   }
 
   const result = queue.enqueue(
@@ -672,7 +672,7 @@ async function mainLoop () {
             await poller.sendMessage(response, msg.messageId);
           }
         } else if (parsed.type === 'task') {
-          logger.info(`Task for @${parsed.project}${parsed.branch ? '/' + parsed.branch : ''}: ${parsed.text}`);
+          logger.info(`Task for /${parsed.project}${parsed.branch ? '/' + parsed.branch : ''}: ${parsed.text}`);
           await handleTask(parsed, msg.messageId);
         }
       }

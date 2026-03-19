@@ -60,7 +60,7 @@ GET /getUpdates?timeout=30  ────►     "Let's wait up to 30 seconds,
      connection is open)
 
                                       After 15 sec a user
-                                      wrote "@proj1 fix bug"
+                                      wrote "/proj1 fix bug"
 
 ◄──── {"result": [{"message":...}]}   "There's a message, here it is!"
 
@@ -180,7 +180,7 @@ Running two listeners is impossible — the PID file prevents it. And this is im
 │  ┌───────┴────────┐    ┌───────┴───────┐   │
 │  │ MessageParser  │    │  TaskRunner   │   │
 │  │                │    │               │   │
-│  │ @proj/branch   │    │ spawn claude  │   │
+│  │ /proj/branch   │    │ spawn claude  │   │
 │  │ /commands      │    │ timeouts      │   │
 │  └────────────────┘    │ kill          │   │
 │                        └───────────────┘   │
@@ -197,10 +197,10 @@ Running two listeners is impossible — the PID file prevents it. And this is im
 | Module | File | Description |
 |---|---|---|
 | **TelegramPoller** | `telegram-poller.js` | Long polling to the Telegram API. Receives messages, sends replies. Splits long messages into chunks |
-| **MessageParser** | `message-parser.js` | Parses message text: is it a command (`/status`) or a task (`@proj1 fix bug`)? Extracts project, branch, task text |
+| **MessageParser** | `message-parser.js` | Parses message text: is it a command (`/status`) or a task (`/proj1 fix bug`)? Extracts project, branch, task text |
 | **WorkQueue** | `work-queue.js` | Manages task queues. Each working directory has a separate FIFO queue. Guarantees: one `claude` process per directory. Persists state to disk |
 | **TaskRunner** | `task-runner.js` | Runs `claude -p "task"` as a child process. Monitors timeouts. Can kill the process on cancellation. Emits events: complete, error, timeout |
-| **WorktreeManager** | `worktree-manager.js` | Creates and removes git worktrees. Auto-discovery via `git worktree list`. Maps `@project/branch` to a path on disk |
+| **WorktreeManager** | `worktree-manager.js` | Creates and removes git worktrees. Auto-discovery via `git worktree list`. Maps `/project/branch` to a path on disk |
 | **Logger** | `logger.js` | Writes operational log to `~/.claude/.cc-n-listener.log`. Rotation when exceeding 5 MB (old file → `.log.old`) |
 | **TaskLogger** | `task-logger.js` | Writes task Q&A logs (questions to Claude and answers). Separate file per project/branch. Rotation at 5 MB |
 
@@ -227,12 +227,12 @@ MessageParser.parse(text)
        │
        └─ Otherwise ──► Task
             │
-            ├─ "@proj1/feature/auth fix bug"
+            ├─ "/proj1/feature/auth fix bug"
             │    → project = "proj1"
             │    → branch = "feature/auth"
             │    → text = "fix bug"
             │
-            ├─ "@proj1 fix bug"
+            ├─ "/proj1 fix bug"
             │    → project = "proj1"
             │    → branch = null (main)
             │    → text = "fix bug"
@@ -357,9 +357,9 @@ Each project is an alias (short name) + path to a directory on disk:
 }
 ```
 
-Now in Telegram you can write `@api refactor the code`, and Claude will run in the `/home/user/projects/api-server` directory.
+Now in Telegram you can write `/api refactor the code`, and Claude will run in the `/home/user/projects/api-server` directory.
 
-The **`default`** alias is special. Messages without `@project` go to it:
+The **`default`** alias is special. Messages without `/project` prefix go to it:
 
 ```json
 {
@@ -378,9 +378,9 @@ The **`default`** alias is special. Messages without `@project` go to it:
 In the Telegram chat with the bot:
 
 ```
-@project task                      ← task in the main worktree of the project
-@project/branch task               ← task in the worktree of a specific branch
-task without @                     ← task in the "default" project
+/project task                      ← task in the main worktree of the project
+/project/branch task               ← task in the worktree of a specific branch
+task without /project prefix       ← task in the "default" project
 ```
 
 ### Examples
@@ -391,25 +391,25 @@ add a README to the project
 → runs in the `default` project (if configured)
 
 ```
-@api fix the authentication bug
+/api fix the authentication bug
 ```
 → runs in `/home/user/projects/api-server`
 
 ```
-@api/feature/payments add Stripe integration
+/api/feature/payments add Stripe integration
 ```
 → runs in the `feature/payments` worktree of the `api` project.
 If the worktree doesn't exist, it will be created automatically.
 
 ```
-@web update dependencies
+/web update dependencies
 ```
 → runs in `/home/user/projects/web-app`
 
 ### What happens when a task is sent
 
 1. The Listener receives the message from Telegram
-2. Parses `@project/branch` from the beginning of the message
+2. Parses `/project/branch` from the beginning of the message
 3. Determines the working directory (workDir)
 4. Checks: is this workDir busy with another task?
    - **No** → runs `claude -p "task"` immediately, replies with `⏳ Running...`
@@ -445,8 +445,8 @@ api-server/                        ← main worktree, branch main
 **The queue is tied to the working directory, not to the project name.**
 
 This means:
-- `@api task` and `@api/feature/auth task` are **different queues**, because they're different directories. They run **in parallel**.
-- `@api task1` and `@api task2` are **the same queue** (both go to the main worktree). `task2` will wait for `task1` to complete.
+- `/api task` and `/api/feature/auth task` are **different queues**, because they're different directories. They run **in parallel**.
+- `/api task1` and `/api task2` are **the same queue** (both go to the main worktree). `task2` will wait for `task1` to complete.
 
 ```
 Project "api"
@@ -466,7 +466,7 @@ Within each — strictly one task at a time.
 
 ### Auto-creation of worktrees
 
-When you write `@api/feature/new task`, and a worktree for the `feature/new` branch doesn't exist:
+When you write `/api/feature/new task`, and a worktree for the `feature/new` branch doesn't exist:
 
 1. The Listener checks: does the `feature/new` branch exist in git?
    - Yes → `git worktree add ~/.claude/worktrees/api/feature-new feature/new`
@@ -484,9 +484,9 @@ On startup, the listener scans each project with `git worktree list` and picks u
 ### Manual worktree management from Telegram
 
 ```
-/worktree @api feature/payments     ← create a worktree
-/worktrees @api                     ← list all worktrees for a project
-/rmworktree @api feature/payments   ← remove a worktree
+/worktree /api/feature/payments     ← create a worktree
+/worktrees /api                     ← list all worktrees for a project
+/rmworktree /api/feature/payments   ← remove a worktree
 ```
 
 ---
@@ -504,41 +504,41 @@ While `active !== null`, all new tasks for this workDir go into the `queue`.
 ### Example: 4 tasks, 2 projects
 
 ```
-10:00  You: @api fix the router bug
-       Bot: ⏳ [@api] Running: fix the router bug
+10:00  You: /api fix the router bug
+       Bot: ⏳ [/api] Running: fix the router bug
        (api/main: active = "fix the router bug", queue = [])
 
-10:01  You: @web update dependencies
-       Bot: ⏳ [@web] Running: update dependencies
+10:01  You: /web update dependencies
+       Bot: ⏳ [/web] Running: update dependencies
        (web/main: active = "update dependencies", queue = [])
        (api and web are running in parallel!)
 
-10:02  You: @api add tests
-       Bot: 📋 [@api] Queued (position 1).
+10:02  You: /api add tests
+       Bot: 📋 [/api] Queued (position 1).
             Currently running: fix the router bug
        (api/main: active = "fix the router bug", queue = ["add tests"])
 
-10:03  You: @api refactor the code
-       Bot: 📋 [@api] Queued (position 2).
+10:03  You: /api refactor the code
+       Bot: 📋 [/api] Queued (position 2).
             Currently running: fix the router bug
        (api/main: active = "fix the router bug", queue = ["add tests", "refactor"])
 
-10:05  Bot: ✅ [@web] Done: update dependencies
+10:05  Bot: ✅ [/web] Done: update dependencies
             <result>
        (web/main: active = null, queue = [])
 
-10:08  Bot: ✅ [@api] Done: fix the router bug
+10:08  Bot: ✅ [/api] Done: fix the router bug
             <result>
-       Bot: ⏳ [@api] Running: add tests
+       Bot: ⏳ [/api] Running: add tests
        (api/main: active = "add tests", queue = ["refactor"])
        (next task started automatically!)
 
-10:15  Bot: ✅ [@api] Done: add tests
+10:15  Bot: ✅ [/api] Done: add tests
             <result>
-       Bot: ⏳ [@api] Running: refactor the code
+       Bot: ⏳ [/api] Running: refactor the code
        (api/main: active = "refactor", queue = [])
 
-10:25  Bot: ✅ [@api] Done: refactor the code
+10:25  Bot: ✅ [/api] Done: refactor the code
             <result>
        (api/main: active = null, queue = [])
        (all tasks completed)
@@ -555,7 +555,7 @@ While `active !== null`, all new tasks for this workDir go into the `queue`.
 If a task runs longer than 30 minutes (configurable: `taskTimeoutMinutes`), it is forcefully stopped:
 
 ```
-Bot: ⏰ [@api] Task forcefully stopped — timeout exceeded (30 min): refactor the code
+Bot: ⏰ [/api] Task forcefully stopped — timeout exceeded (30 min): refactor the code
 ```
 
 After a timeout, the next task from the queue starts automatically.
@@ -581,7 +581,7 @@ Bot: 📊 Status:
 ```
 
 ```
-You: /status @api
+You: /status /api
 Bot: 📊 Project "api":
 
      main:
@@ -598,7 +598,7 @@ Bot: 📊 Project "api":
 You: /queue
 Bot: 📋 Queues:
 
-     @api:
+     /api:
        ▶ fix the router bug
        1. add tests
        2. refactor the code
@@ -607,16 +607,16 @@ Bot: 📋 Queues:
 ### /cancel — stop a running task
 
 ```
-You: /cancel @api
-Bot: 🛑 [@api] Task cancelled. Starting next.
-     ⏳ [@api] Running: add tests
+You: /cancel /api
+Bot: 🛑 [/api] Task cancelled. Starting next.
+     ⏳ [/api] Running: add tests
 ```
 
 Cancelling a task in a worktree:
 
 ```
-You: /cancel @api/feature/auth
-Bot: 🛑 [@api/feature/auth] Task cancelled
+You: /cancel /api/feature/auth
+Bot: 🛑 [/api/feature/auth] Task cancelled
 ```
 
 ### /drop — remove from queue
@@ -624,7 +624,7 @@ Bot: 🛑 [@api/feature/auth] Task cancelled
 Removes a task that **hasn't started executing yet** (waiting in the queue):
 
 ```
-You: /drop @api 2
+You: /drop /api 2
 Bot: 🗑 Removed from queue: refactor the code
 ```
 
@@ -635,8 +635,8 @@ The task number is the position in the queue (starting from 1). You can check nu
 Removes all tasks from the queue (the active task continues running):
 
 ```
-You: /clear @api
-Bot: 🧹 [@api] Queue cleared (3 tasks)
+You: /clear /api
+Bot: 🧹 [/api] Queue cleared (3 tasks)
 ```
 
 ### /projects — list projects
@@ -646,15 +646,15 @@ You: /projects
 Bot: 📂 Projects:
 
      @default → /home/user/main-project
-     @api → /home/user/projects/api-server
+     /api → /home/user/projects/api-server
        /feature/auth → ~/.claude/worktrees/api/feature-auth
-     @web → /home/user/projects/web-app
+     /web → /home/user/projects/web-app
 ```
 
 ### /worktrees — project worktrees
 
 ```
-You: /worktrees @api
+You: /worktrees /api
 Bot: 🌳 Worktrees for project "api":
      • main → /home/user/projects/api-server
      • feature/auth → ~/.claude/worktrees/api/feature-auth
@@ -664,7 +664,7 @@ Bot: 🌳 Worktrees for project "api":
 ### /worktree — create a worktree
 
 ```
-You: /worktree @api feature/payments
+You: /worktree /api/feature/payments
 Bot: 🌿 Created worktree for project "api":
      Branch: feature/payments
      Path: ~/.claude/worktrees/api/feature-payments
@@ -673,7 +673,7 @@ Bot: 🌿 Created worktree for project "api":
 ### /rmworktree — remove a worktree
 
 ```
-You: /rmworktree @api feature/payments
+You: /rmworktree /api/feature/payments
 Bot: 🗑 Worktree feature/payments removed from project "api"
 ```
 
@@ -681,7 +681,7 @@ If a task is running in the worktree, removal will be rejected:
 
 ```
 Bot: ❌ Cannot remove worktree: a task is running in it.
-     First /cancel @api/feature/payments
+     First /cancel /api/feature/payments
 ```
 
 ### /history — history
@@ -690,10 +690,10 @@ Bot: ❌ Cannot remove worktree: a task is running in it.
 You: /history
 Bot: 📜 Recent tasks:
 
-     ✅ [@api] fix the router bug
-     ✅ [@web] update dependencies
-     🛑 [@api/feature/auth] implement OAuth2
-     ✅ [@api] add tests
+     ✅ [/api] fix the router bug
+     ✅ [/web] update dependencies
+     🛑 [/api/feature/auth] implement OAuth2
+     ✅ [/api] add tests
 ```
 
 ### /stop — stop the listener
@@ -720,7 +720,7 @@ Shows a brief reference for all commands.
    Telegram message → getUpdates() → parsing
 
 2. ROUTING
-   "@api/feature/auth task"
+   "/api/feature/auth task"
      → project = "api"
      → branch = "feature/auth"
      → workDir = ~/.claude/worktrees/api/feature-auth
@@ -896,7 +896,7 @@ Check:
 ### Task is stuck
 
 ```
-/cancel @project
+/cancel /project
 ```
 
 Or restart the listener:
@@ -950,8 +950,8 @@ You (terminal): claude-notify listener start
 
 === 10:01 — First task ===
 
-You: @api add endpoint GET /users with pagination
-Bot: ⏳ [@api] Running: add endpoint GET /users with pagination
+You: /api add endpoint GET /users with pagination
+Bot: ⏳ [/api] Running: add endpoint GET /users with pagination
 
     Behind the scenes: process started
     claude -p "add endpoint GET /users with pagination" --output-format text
@@ -959,23 +959,23 @@ Bot: ⏳ [@api] Running: add endpoint GET /users with pagination
 
 === 10:02 — Task to another project (in parallel!) ===
 
-You: @web add a /users page that calls GET /users
-Bot: ⏳ [@web] Running: add a /users page that calls GET /users
+You: /web add a /users page that calls GET /users
+Bot: ⏳ [/web] Running: add a /users page that calls GET /users
 
     Now two claude processes are running in parallel:
     one in /home/user/projects/api, another in /home/user/projects/web
 
 === 10:03 — Another task for api (queued) ===
 
-You: @api add tests for /users
-Bot: 📋 [@api] Queued (position 1).
+You: /api add tests for /users
+Bot: 📋 [/api] Queued (position 1).
      Currently running: add endpoint GET /users with pagination
 
 === 10:04 — Task in a worktree (in parallel with api/main!) ===
 
-You: @api/feature/auth add JWT authorization middleware
+You: /api/feature/auth add JWT authorization middleware
 Bot: 🌿 Created worktree feature/auth for project "api"
-     ⏳ [@api/feature/auth] Running: add JWT authorization middleware
+     ⏳ [/api/feature/auth] Running: add JWT authorization middleware
 
     Three claude processes running in parallel:
     1. api/main     → GET /users
@@ -996,7 +996,7 @@ Bot: 📊 Status:
 
 === 10:07 — web finished ===
 
-Bot: ✅ [@web] Done: add a /users page that calls GET /users
+Bot: ✅ [/web] Done: add a /users page that calls GET /users
 
      Created file src/pages/Users.vue with a user table.
      Added route in src/router.js.
@@ -1004,24 +1004,24 @@ Bot: ✅ [@web] Done: add a /users page that calls GET /users
 
 === 10:09 — api/main finished, automatically starts the next task ===
 
-Bot: ✅ [@api] Done: add endpoint GET /users with pagination
+Bot: ✅ [/api] Done: add endpoint GET /users with pagination
 
      Created controller src/controllers/users.js.
      Added route GET /users in src/routes.js.
      Supports query parameters: page, limit, sort.
 
-Bot: ⏳ [@api] Running: add tests for /users
+Bot: ⏳ [/api] Running: add tests for /users
 
     Next task from the queue started automatically!
 
 === 10:12 — Cancel a worktree task ===
 
-You: /cancel @api/feature/auth
-Bot: 🛑 [@api/feature/auth] Task cancelled
+You: /cancel /api/feature/auth
+Bot: 🛑 [/api/feature/auth] Task cancelled
 
 === 10:15 — api/main (tests) finished ===
 
-Bot: ✅ [@api] Done: add tests for /users
+Bot: ✅ [/api] Done: add tests for /users
 
      Created tests/users.test.js.
      Covered cases: pagination, sorting, empty result, errors.
@@ -1031,14 +1031,14 @@ Bot: ✅ [@api] Done: add tests for /users
 You: /history
 Bot: 📜 Recent tasks:
 
-     ✅ [@api] add tests for /users
-     🛑 [@api/feature/auth] add JWT authorization middleware
-     ✅ [@api] add endpoint GET /users with pagination
-     ✅ [@web] add a /users page...
+     ✅ [/api] add tests for /users
+     🛑 [/api/feature/auth] add JWT authorization middleware
+     ✅ [/api] add endpoint GET /users with pagination
+     ✅ [/web] add a /users page...
 
 === 10:17 — Remove unneeded worktree ===
 
-You: /rmworktree @api feature/auth
+You: /rmworktree /api/feature/auth
 Bot: 🗑 Worktree feature/auth removed from project "api"
 
 === Evening — Shut down ===
