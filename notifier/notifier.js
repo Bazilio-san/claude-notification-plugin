@@ -688,10 +688,12 @@ process.stdin.on('end', async () => {
   const desktopStatus = eventType === 'Notification' ? 'Waiting' : 'Finished';
 
   const branch = getBranch(cwd);
-  const label = branch ? `/${project}/${branch}` : `/${project}`;
-  const labelHtml = branch
-    ? `/<b>${escapeHtml(project)}</b>/<b>${escapeHtml(branch)}</b>`
-    : `/<b>${escapeHtml(project)}</b>`;
+  let label = `/${project}`;
+  let labelHtml = `<b>${escapeHtml(project)}</b>`;
+  if (branch) {
+    label += `/${branch}`;
+    labelHtml += `/<b>${escapeHtml(branch)}</b>`;
+  }
 
   const triggerLine = config.debug ? `\nTrigger: ${eventType}` : '';
 
