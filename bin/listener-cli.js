@@ -446,7 +446,7 @@ Press Enter to keep current value shown in [brackets].
 
   while (true) {
     console.log('');
-    const addMore = await askYesNo(rl, 'Add another project? (y/n): ');
+    const addMore = await askYesNo(rl, 'Add another project? (y/N): ');
     if (!addMore) {
       break;
     }
