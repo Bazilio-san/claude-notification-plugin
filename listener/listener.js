@@ -137,8 +137,8 @@ runner.on('complete', async (workDir, task, output) => {
 
   // Build result: try replying to user's original message without duplicating the task text.
   // If reply fails (user deleted their message), resend with task text included.
-  const headerShort = `✅  <code>${label}</code> Done:`;
-  const headerFull = `✅  <code>${label}</code> Done: ${escapeHtml(task.text)}`;
+  const headerShort = `✅  <code>${label}</code>`;
+  const headerFull = `✅  <code>${label}</code>\n\n${escapeHtml(task.text)}`;
   let body = '';
   if (output) {
     if (output.length > 20000) {
@@ -176,9 +176,9 @@ runner.on('error', async (workDir, task, errorMsg) => {
   await poller.deleteMessage(task.runningMessageId);
 
   const body = `\n\n<pre>${escapeHtml(errorMsg)}</pre>`;
-  const sentId = await poller.sendMessage(`❌ [${label}] Error:${body}`, task.telegramMessageId);
+  const sentId = await poller.sendMessage(`❌  <code>${label}</code>\nError:${body}`, task.telegramMessageId);
   if (!sentId && task.telegramMessageId) {
-    await poller.sendMessage(`❌ [${label}] Error: ${escapeHtml(task.text)}${body}`);
+    await poller.sendMessage(`❌  <code>${label}</code>\nError: ${escapeHtml(task.text)}${body}`);
   }
 
   const next = queue.onTaskComplete(workDir, `ERROR: ${errorMsg}`);
@@ -194,7 +194,7 @@ runner.on('timeout', async (workDir, task) => {
 
   await poller.deleteMessage(task.runningMessageId);
 
-  const headerShort = `⏰ [${label}] Task forcefully stopped — timeout exceeded (${timeoutMin} min)`;
+  const headerShort = `⏰ <code>${label}</code>\nTask forcefully stopped — timeout exceeded (${timeoutMin} min)`;
   const headerFull = `${headerShort}: ${escapeHtml(task.text)}`;
   const sentId = await poller.sendMessage(headerShort, task.telegramMessageId);
   if (!sentId && task.telegramMessageId) {
@@ -224,8 +224,8 @@ function formatLabel (entry) {
 async function startTask (workDir, task) {
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
-  const runningShort = `⏳ [${label}] Running...`;
-  const runningFull = `⏳ [${label}] Running: ${escapeHtml(task.text)}`;
+  const runningShort = `⏳ <code>${label}</code>\nRunning...`;
+  const runningFull = `⏳ <code>${label}</code>\nRunning: ${escapeHtml(task.text)}`;
   let runningMsgId = null;
 
   if (task.telegramMessageId) {
@@ -244,7 +244,7 @@ async function startTask (workDir, task) {
     queue.markStarted(workDir, started.pid);
   } catch (err) {
     logger.error(`Failed to start task: ${err.message}`);
-    poller.sendMessage(`❌ [${label}] Failed to start: ${escapeHtml(err.message)}`);
+    poller.sendMessage(`❌  <code>${label}</code>\nFailed to start: ${escapeHtml(err.message)}`);
     queue.onTaskComplete(workDir, `START_ERROR: ${err.message}`);
   }
 }
