@@ -296,7 +296,7 @@ Re-run `claude-notify listener setup` anytime to reconfigure.
 
 ### Manual configuration
 
-Full example of `~/.claude/notifier.config.json` with the listener section:
+Full example of `~/.claude/claude-notify.config.json` with the listener section:
 
 ```json
 {
@@ -882,7 +882,7 @@ claude-notify listener status
 
 Check:
 
-1. Does the config exist? `cat ~/.claude/notifier.config.json`
+1. Does the config exist? `cat ~/.claude/claude-notify.config.json`
 2. Are `telegram.token` and `telegram.chatId` present?
 3. Is there a `listener.projects` section?
 4. Logs: `claude-notify listener logs`

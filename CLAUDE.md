@@ -43,7 +43,7 @@ When the user says "опубликуй", "опубликуй проект", or "
 
 - ESM modules (`"type": "module"` in package.json), Node >= 18
 - npm lifecycle script: `postinstall` runs `bin/install.js`. Uninstall via `claude-notify uninstall` (npm doesn't run preuninstall for global packages)
-- Config file: `~/.claude/notifier.config.json` — env vars `CLAUDE_NOTIFY_TELEGRAM_TOKEN` / `CLAUDE_NOTIFY_TELEGRAM_CHAT_ID` override config
+- Config file: `~/.claude/claude-notify.config.json` — env vars `CLAUDE_NOTIFY_TELEGRAM_TOKEN` / `CLAUDE_NOTIFY_TELEGRAM_CHAT_ID` override config
 - Per-project disable via `CLAUDE_NOTIFY_DISABLE=1` env var
 - Per-channel env overrides: `CLAUDE_NOTIFY_TELEGRAM`, `CLAUDE_NOTIFY_DESKTOP`, `CLAUDE_NOTIFY_SOUND`, `CLAUDE_NOTIFY_VOICE`, `CLAUDE_NOTIFY_WAITING`, `CLAUDE_NOTIFY_DEBUG`, `CLAUDE_NOTIFY_INCLUDE_LAST_CC_MESSAGE_IN_TELEGRAM` (`1`/`0`), `CLAUDE_NOTIFY_WEBHOOK_URL` (URL string), `CLAUDE_NOTIFY_SEND_USER_PROMPT_TO_WEBHOOK` (`1`/`0`), `CLAUDE_NOTIFY_AFTER_SECONDS` (number), `CLAUDE_NOTIFY_AFTER_LISTENER` (`1`/`0`)
 - Dependencies: `node-notifier` (cross-platform desktop notifications with native fallback). Sound: PowerShell (Windows), afplay (macOS), paplay/aplay (Linux). Voice: SAPI (Windows), say (macOS), spd-say/espeak (Linux)

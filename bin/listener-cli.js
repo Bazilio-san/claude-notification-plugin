@@ -1,26 +1,24 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import {
+  HOME, CLAUDE_DIR, CONFIG_PATH, PID_PATH, LISTENER_LOG_FILENAME,
+} from './constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_LOG_DIR = path.join(os.homedir(), '.claude');
-const PID_FILE = path.join(os.homedir(), '.claude', '.listener.pid');
-const CONFIG_FILE = path.join(os.homedir(), '.claude', 'notifier.config.json');
-
 function getLogFile () {
   try {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    const logDir = cfg.listener?.logDir || DEFAULT_LOG_DIR;
-    return path.join(logDir, '.cc-n-listener.log');
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const logDir = cfg.listener?.logDir || CLAUDE_DIR;
+    return path.join(logDir, LISTENER_LOG_FILENAME);
   } catch {
-    return path.join(DEFAULT_LOG_DIR, '.cc-n-listener.log');
+    return path.join(CLAUDE_DIR, LISTENER_LOG_FILENAME);
   }
 }
 const LISTENER_SCRIPT = path.join(__dirname, '..', 'listener', 'listener.js');
@@ -71,22 +69,22 @@ function startDaemon () {
   // Clean stale PID file
   if (existingPid) {
     try {
-      fs.unlinkSync(PID_FILE);
+      fs.unlinkSync(PID_PATH);
     } catch {
       // ignore
     }
   }
 
   // Validate config
-  if (!fs.existsSync(CONFIG_FILE)) {
-    console.error(`Config not found: ${CONFIG_FILE}`);
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.error(`Config not found: ${CONFIG_PATH}`);
     console.error('Run claude-notify install first, or create the config manually.');
     process.exit(1);
   }
 
   let config;
   try {
-    config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
   } catch (err) {
     console.error(`Invalid config: ${err.message}`);
     process.exit(1);
@@ -134,8 +132,8 @@ function startDaemon () {
   fs.closeSync(logFd);
 
   // Write PID
-  fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
-  fs.writeFileSync(PID_FILE, String(child.pid));
+  fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
+  fs.writeFileSync(PID_PATH, String(child.pid));
 
   console.log(`Listener started (PID: ${child.pid})
 Log: ${logFile}
@@ -235,8 +233,8 @@ function showLogs () {
 
 function readPid () {
   try {
-    if (fs.existsSync(PID_FILE)) {
-      const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8').trim(), 10);
+    if (fs.existsSync(PID_PATH)) {
+      const pid = parseInt(fs.readFileSync(PID_PATH, 'utf-8').trim(), 10);
       return isNaN(pid) ? null : pid;
     }
   } catch {
@@ -247,8 +245,8 @@ function readPid () {
 
 function cleanPid () {
   try {
-    if (fs.existsSync(PID_FILE)) {
-      fs.unlinkSync(PID_FILE);
+    if (fs.existsSync(PID_PATH)) {
+      fs.unlinkSync(PID_PATH);
     }
   } catch {
     // ignore
@@ -365,9 +363,9 @@ async function validateProjectPath (rl, inputPath) {
 
 async function setupListener () {
   let config = {};
-  if (fs.existsSync(CONFIG_FILE)) {
+  if (fs.existsSync(CONFIG_PATH)) {
     try {
-      config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
     } catch {
       // ignore
     }
@@ -375,10 +373,8 @@ async function setupListener () {
 
   config.listener = config.listener || {};
   const L = config.listener;
-  const home = os.homedir();
-
   const defaults = {
-    worktreeBaseDir: L.worktreeBaseDir || path.join(home, '.claude', 'worktrees'),
+    worktreeBaseDir: L.worktreeBaseDir || path.join(HOME, '.claude', 'worktrees'),
     taskTimeoutMinutes: L.taskTimeoutMinutes ?? 30,
     maxQueuePerWorkDir: L.maxQueuePerWorkDir ?? 10,
     maxTotalTasks: L.maxTotalTasks ?? 50,
@@ -497,10 +493,10 @@ Press Enter to keep current value shown in [brackets].
 
   rl.close();
 
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
   const projectCount = Object.keys(L.projects).length;
-  console.log(`\nListener config saved to ${CONFIG_FILE}`);
+  console.log(`\nListener config saved to ${CONFIG_PATH}`);
   if (hasValidProject || projectCount > 0) {
     console.log('Run "claude-notify listener start" to apply.');
   } else {

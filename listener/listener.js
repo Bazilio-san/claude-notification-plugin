@@ -2,7 +2,6 @@
 // noinspection UnnecessaryLocalVariableJS
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import process from 'process';
 import { createLogger } from './logger.js';
@@ -12,13 +11,13 @@ import { WorkQueue } from './work-queue.js';
 import { TaskRunner } from './task-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { parseMessage, parseTarget } from './message-parser.js';
+import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME } from '../bin/constants.js';
 
 // ----------------------
 // CONFIG
 // ----------------------
 
-const CONFIG_PATH = path.join(os.homedir(), '.claude', 'notifier.config.json');
-const DEFAULT_LOG_DIR = path.join(os.homedir(), '.claude');
+const DEFAULT_LOG_DIR = CLAUDE_DIR;
 
 function loadConfig () {
   try {
@@ -37,7 +36,7 @@ function loadConfig () {
 const config = loadConfig();
 const listenerLogDir = config.listener?.logDir || DEFAULT_LOG_DIR;
 fs.mkdirSync(listenerLogDir, { recursive: true });
-const logger = createLogger(path.join(listenerLogDir, '.cc-n-listener.log'));
+const logger = createLogger(path.join(listenerLogDir, LISTENER_LOG_FILENAME));
 
 // Validate required fields
 const token = process.env.CLAUDE_NOTIFY_TELEGRAM_TOKEN || config.telegramToken || config.telegram?.token;

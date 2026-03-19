@@ -1,20 +1,14 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
-
-const home = os.homedir();
-const claudeDir = path.join(home, '.claude');
-const configPath = path.join(claudeDir, 'notifier.config.json');
-const settingsPath = path.join(claudeDir, 'settings.json');
-const statePath = path.join(claudeDir, '.notifier_state.json');
-const pidFile = path.join(claudeDir, '.listener.pid');
-
-const HOOK_COMMAND = 'claude-notify';
-const PLUGIN_KEY = 'claude-notification-plugin@bazilio-plugins';
-const MARKETPLACE_KEY = 'bazilio-plugins';
+import {
+  HOME, CLAUDE_DIR,
+  CONFIG_PATH, STATE_PATH, PID_PATH, RESOLVER_PATH, LISTENER_LOG_PATH,
+  SETTINGS_PATH, INSTALLED_PLUGINS_PATH, KNOWN_MARKETPLACES_PATH,
+  HOOK_COMMAND, PLUGIN_KEY, MARKETPLACE_KEY,
+} from './constants.js';
 
 function isPluginHookCommand (command) {
   if (typeof command !== 'string') {
@@ -155,7 +149,7 @@ function stopListenerIfRunning () {
   let stopped = false;
   const processed = new Set();
 
-  const pidFromFile = readPid(pidFile);
+  const pidFromFile = readPid(PID_PATH);
   if (pidFromFile) {
     if (killProcessTree(pidFromFile)) {
       stopped = true;
@@ -172,7 +166,7 @@ function stopListenerIfRunning () {
     }
   }
 
-  removeFileIfExists(pidFile);
+  removeFileIfExists(PID_PATH);
   return stopped;
 }
 
@@ -182,9 +176,9 @@ console.log('\nUninstalling Claude Notification Plugin...\n');
 stopListenerIfRunning();
 
 // Remove hooks from settings.json
-if (fs.existsSync(settingsPath)) {
+if (fs.existsSync(SETTINGS_PATH)) {
   try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
     let hadPluginHooks = false;
 
     if (settings.hooks) {
@@ -227,10 +221,10 @@ if (fs.existsSync(settingsPath)) {
       console.log('Removed marketplace from extraKnownMarketplaces in settings.json');
     }
 
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
 
     // Verify hooks were actually removed
-    const verify = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const verify = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
     const remainingPluginHooks = verify.hooks
       ? Object.values(verify.hooks).some((matchers) =>
         Array.isArray(matchers) &&
@@ -248,9 +242,7 @@ if (fs.existsSync(settingsPath)) {
 }
 
 // Remove config, state, resolver, and listener files
-const resolverPath = path.join(claudeDir, 'claude-notify-resolve.js');
-const listenerLogFile = path.join(claudeDir, '.cc-n-listener.log');
-for (const file of [configPath, statePath, resolverPath, pidFile, listenerLogFile]) {
+for (const file of [CONFIG_PATH, STATE_PATH, RESOLVER_PATH, PID_PATH, LISTENER_LOG_PATH]) {
   if (fs.existsSync(file)) {
     fs.unlinkSync(file);
     console.log(`Removed ${path.basename(file)}`);
@@ -274,7 +266,7 @@ try {
 }
 
 // ~/.local/bin (common on Linux/macOS, also used on Windows)
-wrapperDirs.add(path.join(home, '.local', 'bin'));
+wrapperDirs.add(path.join(HOME, '.local', 'bin'));
 
 for (const dir of wrapperDirs) {
   for (const name of WRAPPER_NAMES) {
@@ -287,13 +279,12 @@ for (const dir of wrapperDirs) {
 }
 
 // Remove from installed_plugins.json
-const installedPluginsPath = path.join(claudeDir, 'plugins', 'installed_plugins.json');
-if (fs.existsSync(installedPluginsPath)) {
+if (fs.existsSync(INSTALLED_PLUGINS_PATH)) {
   try {
-    const data = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(INSTALLED_PLUGINS_PATH, 'utf-8'));
     if (data.plugins?.[PLUGIN_KEY]) {
       delete data.plugins[PLUGIN_KEY];
-      fs.writeFileSync(installedPluginsPath, JSON.stringify(data, null, 2));
+      fs.writeFileSync(INSTALLED_PLUGINS_PATH, JSON.stringify(data, null, 2));
       console.log('Removed plugin from installed_plugins.json');
     }
   } catch {
@@ -302,13 +293,12 @@ if (fs.existsSync(installedPluginsPath)) {
 }
 
 // Remove marketplace from known_marketplaces.json if no plugins reference it
-const knownMarketplacesPath = path.join(claudeDir, 'plugins', 'known_marketplaces.json');
 try {
-  if (fs.existsSync(knownMarketplacesPath)) {
+  if (fs.existsSync(KNOWN_MARKETPLACES_PATH)) {
     // Check if any remaining plugins reference this marketplace
     let hasMarketplacePlugins = false;
-    if (fs.existsSync(installedPluginsPath)) {
-      const data = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
+    if (fs.existsSync(INSTALLED_PLUGINS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(INSTALLED_PLUGINS_PATH, 'utf-8'));
       if (data.plugins) {
         hasMarketplacePlugins = Object.keys(data.plugins)
           .some((key) => key.endsWith(`@${MARKETPLACE_KEY}`));
@@ -316,13 +306,13 @@ try {
     }
 
     if (!hasMarketplacePlugins) {
-      const marketplaces = JSON.parse(fs.readFileSync(knownMarketplacesPath, 'utf-8'));
+      const marketplaces = JSON.parse(fs.readFileSync(KNOWN_MARKETPLACES_PATH, 'utf-8'));
       if (marketplaces[MARKETPLACE_KEY]) {
         delete marketplaces[MARKETPLACE_KEY];
-        fs.writeFileSync(knownMarketplacesPath, JSON.stringify(marketplaces, null, 2));
+        fs.writeFileSync(KNOWN_MARKETPLACES_PATH, JSON.stringify(marketplaces, null, 2));
         console.log(`Removed marketplace "${MARKETPLACE_KEY}" from known_marketplaces.json`);
       }
-      const marketplaceDir = path.join(claudeDir, 'plugins', 'marketplaces', MARKETPLACE_KEY);
+      const marketplaceDir = path.join(CLAUDE_DIR, 'plugins', 'marketplaces', MARKETPLACE_KEY);
       if (fs.existsSync(marketplaceDir)) {
         fs.rmSync(marketplaceDir, { recursive: true, force: true });
         console.log(`Removed marketplace directory: ${marketplaceDir}`);
@@ -334,7 +324,7 @@ try {
 }
 
 // Remove plugin cache
-const pluginCacheDir = path.join(claudeDir, 'plugins', 'cache', 'bazilio-plugins', 'claude-notification-plugin');
+const pluginCacheDir = path.join(CLAUDE_DIR, 'plugins', 'cache', 'bazilio-plugins', 'claude-notification-plugin');
 if (fs.existsSync(pluginCacheDir)) {
   fs.rmSync(pluginCacheDir, { recursive: true, force: true });
   if (fs.existsSync(pluginCacheDir)) {

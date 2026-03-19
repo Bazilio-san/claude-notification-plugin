@@ -52,7 +52,7 @@ This removes hooks, config, CLI wrappers, plugin registration, and the npm globa
 
 ## Configuration
 
-Config file: `~/.claude/notifier.config.json`
+Config file: `~/.claude/claude-notify.config.json`
 
 ```json
 {

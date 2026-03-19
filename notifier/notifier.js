@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import process from 'process';
 import { execSync, spawn } from 'child_process';
+import { CONFIG_PATH, STATE_PATH } from '../bin/constants.js';
 
 // ----------------------
 // CONFIG
@@ -40,7 +40,7 @@ function getBranch (cwd) {
 }
 
 function loadConfig () {
-  const configPath = path.join(os.homedir(), '.claude', 'notifier.config.json');
+  const configPath = CONFIG_PATH;
 
   const config = {
     telegram: {
@@ -158,27 +158,19 @@ function isNotifierDisabled () {
     return true;
   }
   // Skip notifications for listener-spawned tasks unless explicitly enabled
-  if (process.env.CLAUDE_NOTIFY_FROM_LISTENER === '1'
-    && process.env.CLAUDE_NOTIFY_AFTER_LISTENER !== '1') {
-    return true;
-  }
-  return false;
+  return process.env.CLAUDE_NOTIFY_FROM_LISTENER === '1'
+    && process.env.CLAUDE_NOTIFY_AFTER_LISTENER !== '1';
+
 }
 
 // ----------------------
 // STATE FILE
 // ----------------------
 
-const STATE_FILE = path.join(
-  os.homedir(),
-  '.claude',
-  '.notifier_state.json',
-);
-
 function loadState () {
-  if (fs.existsSync(STATE_FILE)) {
+  if (fs.existsSync(STATE_PATH)) {
     try {
-      const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      const raw = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
       // Migrate flat state (pre-session format) to new format
       if (!raw.sessions && raw.start !== undefined) {
         return { sessions: {}, sentMessages: raw.sentMessages || [] };
@@ -198,9 +190,9 @@ function loadState () {
 }
 
 function saveState (state) {
-  const dir = path.dirname(STATE_FILE);
+  const dir = path.dirname(STATE_PATH);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  fs.writeFileSync(STATE_PATH, JSON.stringify(state));
 }
 
 function cleanStaleSessions (state) {
@@ -259,7 +251,7 @@ function markdownToTelegramHtml (md) {
   result = result.replace(/~~(.+?)~~/g, '<s>$1</s>');
 
   // Links: [text](url)
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  result = result.replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
   // Restore code blocks and inline codes
   result = result.replace(/\x00CB(\d+)\x00/g, (_, i) => codeBlocks[i]);

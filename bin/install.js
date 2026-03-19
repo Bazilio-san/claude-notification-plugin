@@ -1,26 +1,19 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import {
+  HOME, CLAUDE_DIR, PLUGINS_DIR,
+  CONFIG_PATH, PID_PATH, RESOLVER_PATH, INSTALL_LOG_PATH,
+  SETTINGS_PATH, INSTALLED_PLUGINS_PATH, KNOWN_MARKETPLACES_PATH, MARKETPLACES_DIR,
+  HOOK_COMMAND, MARKETPLACE_KEY, PLUGIN_KEY, MARKETPLACE_REPO, MARKETPLACE_GITHUB,
+} from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
-
-const home = os.homedir();
-const claudeDir = path.join(home, '.claude');
-const pluginsDir = path.join(claudeDir, 'plugins');
-const configPath = path.join(claudeDir, 'notifier.config.json');
-const settingsPath = path.join(claudeDir, 'settings.json');
-const installedPluginsPath = path.join(pluginsDir, 'installed_plugins.json');
-const knownMarketplacesPath = path.join(pluginsDir, 'known_marketplaces.json');
-const marketplacesDir = path.join(pluginsDir, 'marketplaces');
-const RESOLVER_PATH = path.join(claudeDir, 'claude-notify-resolve.js');
-const pidFile = path.join(claudeDir, '.listener.pid');
-const installLogPath = path.join(claudeDir, 'claude-notify-install.log');
 
 // ──────────────────────────────────────
 // Logging to file
@@ -29,8 +22,8 @@ const installLogPath = path.join(claudeDir, 'claude-notify-install.log');
 let logStream;
 
 function initLog () {
-  fs.mkdirSync(claudeDir, { recursive: true });
-  logStream = fs.createWriteStream(installLogPath, { flags: 'w' });
+  fs.mkdirSync(CLAUDE_DIR, { recursive: true });
+  logStream = fs.createWriteStream(INSTALL_LOG_PATH, { flags: 'w' });
   const origLog = console.log.bind(console);
   const origWarn = console.warn.bind(console);
   const stamp = () => new Date().toISOString();
@@ -107,10 +100,10 @@ function stopListenerIfRunning () {
   let stopped = false;
   const pidFromFile = (() => {
     try {
-      if (!fs.existsSync(pidFile)) {
+      if (!fs.existsSync(PID_PATH)) {
         return null;
       }
-      const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+      const pid = parseInt(fs.readFileSync(PID_PATH, 'utf-8').trim(), 10);
       return Number.isInteger(pid) && pid > 0 ? pid : null;
     } catch {
       return null; 
@@ -122,19 +115,13 @@ function stopListenerIfRunning () {
   }
 
   try {
-    if (fs.existsSync(pidFile)) {
-      fs.unlinkSync(pidFile);
+    if (fs.existsSync(PID_PATH)) {
+      fs.unlinkSync(PID_PATH);
     }
   } catch { /* ignore */ }
 
   return stopped;
 }
-
-const HOOK_COMMAND = 'claude-notify';
-const MARKETPLACE_KEY = 'bazilio-plugins';
-const PLUGIN_KEY = 'claude-notification-plugin@bazilio-plugins';
-const MARKETPLACE_REPO = 'https://github.com/Bazilio-san/claude-plugins.git';
-const MARKETPLACE_GITHUB = 'Bazilio-san/claude-plugins';
 
 const CLI_BIN_NAME = 'claude-notify';
 const CLI_BIN_TARGET = 'bin/cli.js';
@@ -158,7 +145,7 @@ function readCommitSha () {
 }
 
 function copyToCache (version) {
-  const cacheBase = path.join(pluginsDir, 'cache', MARKETPLACE_KEY, 'claude-notification-plugin');
+  const cacheBase = path.join(PLUGINS_DIR, 'cache', MARKETPLACE_KEY, 'claude-notification-plugin');
   const dest = path.join(cacheBase, version);
 
   if (fs.existsSync(dest)) {
@@ -203,12 +190,12 @@ function copyToCache (version) {
 }
 
 function updateInstalledPlugins (version, installPath) {
-  fs.mkdirSync(pluginsDir, { recursive: true });
+  fs.mkdirSync(PLUGINS_DIR, { recursive: true });
 
   let data = { version: 2, plugins: {} };
-  if (fs.existsSync(installedPluginsPath)) {
+  if (fs.existsSync(INSTALLED_PLUGINS_PATH)) {
     try {
-      data = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
+      data = JSON.parse(fs.readFileSync(INSTALLED_PLUGINS_PATH, 'utf-8'));
     } catch {
       // ignore malformed file
     }
@@ -226,20 +213,20 @@ function updateInstalledPlugins (version, installPath) {
     gitCommitSha: readCommitSha(),
   }];
 
-  fs.writeFileSync(installedPluginsPath, JSON.stringify(data, null, 2));
+  fs.writeFileSync(INSTALLED_PLUGINS_PATH, JSON.stringify(data, null, 2));
 }
 
 function updateKnownMarketplaces () {
   let data = {};
-  if (fs.existsSync(knownMarketplacesPath)) {
+  if (fs.existsSync(KNOWN_MARKETPLACES_PATH)) {
     try {
-      data = JSON.parse(fs.readFileSync(knownMarketplacesPath, 'utf-8'));
+      data = JSON.parse(fs.readFileSync(KNOWN_MARKETPLACES_PATH, 'utf-8'));
     } catch {
       // ignore malformed file
     }
   }
 
-  const installLocation = path.join(marketplacesDir, MARKETPLACE_KEY);
+  const installLocation = path.join(MARKETPLACES_DIR, MARKETPLACE_KEY);
 
   data[MARKETPLACE_KEY] = {
     ...data[MARKETPLACE_KEY],
@@ -252,11 +239,11 @@ function updateKnownMarketplaces () {
     autoUpdate: true,
   };
 
-  fs.writeFileSync(knownMarketplacesPath, JSON.stringify(data, null, 2));
+  fs.writeFileSync(KNOWN_MARKETPLACES_PATH, JSON.stringify(data, null, 2));
 }
 
 function cloneOrUpdateMarketplace () {
-  const dest = path.join(marketplacesDir, MARKETPLACE_KEY);
+  const dest = path.join(MARKETPLACES_DIR, MARKETPLACE_KEY);
 
   if (fs.existsSync(path.join(dest, '.git'))) {
     try {
@@ -265,7 +252,7 @@ function cloneOrUpdateMarketplace () {
       // offline or conflict — not fatal
     }
   } else {
-    fs.mkdirSync(marketplacesDir, { recursive: true });
+    fs.mkdirSync(MARKETPLACES_DIR, { recursive: true });
     try {
       execSync(`git clone "${MARKETPLACE_REPO}" "${dest}"`, {
         stdio: 'pipe',
@@ -451,9 +438,9 @@ async function main () {
 
   // 2. Interactive Telegram setup
   let existing = {};
-  if (fs.existsSync(configPath)) {
+  if (fs.existsSync(CONFIG_PATH)) {
     try {
-      existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
     } catch {
       // ignore malformed config
     }
@@ -522,7 +509,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   }
 
   // 3. Write config
-  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.mkdirSync(CLAUDE_DIR, { recursive: true });
 
   const platform = process.platform;
   let defaultSoundFile;
@@ -556,7 +543,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     debug: false,
     listener: {
       projects: {},
-      worktreeBaseDir: path.join(home, '.claude', 'worktrees'),
+      worktreeBaseDir: path.join(HOME, '.claude', 'worktrees'),
       autoCreateWorktree: true,
       taskTimeoutMinutes: 30,
       maxQueuePerWorkDir: 10,
@@ -580,15 +567,15 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     config.telegram.chatId = chatId;
   }
 
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  console.log(`  Config saved: ${configPath}`);
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  console.log(`  Config saved: ${CONFIG_PATH}`);
 
   // 4. Register hooks
   let settings = {};
 
-  if (fs.existsSync(settingsPath)) {
+  if (fs.existsSync(SETTINGS_PATH)) {
     try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
     } catch {
       settings = {};
     }
@@ -617,8 +604,8 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
   };
   console.log('  Registered marketplace in extraKnownMarketplaces');
 
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-  console.log(`  Settings saved: ${settingsPath}`);
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  console.log(`  Settings saved: ${SETTINGS_PATH}`);
 
   // 5. Summary
   const telegramStatus = config.telegram.token && config.telegram.chatId
@@ -642,10 +629,10 @@ Plugin hooks (via hooks/hooks.json):
   - Stop (task finished)
   - Notification (waiting for input)
 
-Config: ${configPath}
+Config: ${CONFIG_PATH}
 ${telegramStatus}${platformTip}
 
-Log: ${installLogPath}
+Log: ${INSTALL_LOG_PATH}
 
 To uninstall:  claude-notify uninstall
 

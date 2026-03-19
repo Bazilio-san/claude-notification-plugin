@@ -4,8 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import { CONFIG_PATH, STATE_PATH } from './bin/constants.js';
 
-const os = await import('os');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Load env from .claude/settings.local.json
@@ -39,12 +39,11 @@ const event = {
 // Validate Telegram credentials if Telegram is enabled
 const telegramEnabled = process.env.CLAUDE_NOTIFY_TELEGRAM !== '0';
 if (telegramEnabled) {
-  const configPath = path.join(os.default.homedir(), '.claude', 'notifier.config.json');
   let token = process.env.CLAUDE_NOTIFY_TELEGRAM_TOKEN;
   let chatId = process.env.CLAUDE_NOTIFY_TELEGRAM_CHAT_ID;
   if (!token || !chatId) {
     try {
-      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
       token = token || cfg.telegram?.token;
       chatId = chatId || cfg.telegram?.chatId;
     } catch {
@@ -66,9 +65,8 @@ if (telegramEnabled) {
 }
 
 // First, write a fake start timestamp (20s ago) to state file
-const statePath = path.join(os.default.homedir(), '.claude', '.notifier_state.json');
 const fakeStart = Date.now() - 20_000;
-fs.writeFileSync(statePath, JSON.stringify({
+fs.writeFileSync(STATE_PATH, JSON.stringify({
   sessions: { [sessionId]: { start: fakeStart } },
   sentMessages: [],
 }));
