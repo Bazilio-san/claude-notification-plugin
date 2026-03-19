@@ -59,7 +59,6 @@ export class TaskRunner extends EventEmitter {
       throw new Error(`Already running a task in ${workDir}`);
     }
 
-    this.logger.info(`Running task "${task.text}" in ${workDir}${continueSession ? ' (continue session)' : ' (new session)'}`);
     if (this.taskLogger) {
       this.taskLogger.logQuestion(task.project || 'unknown', task.branch || 'main', workDir, task.text);
     }
@@ -68,6 +67,10 @@ export class TaskRunner extends EventEmitter {
     if (continueSession) {
       args.push('--continue');
     }
+
+    const cmdLine = ['claude', ...args].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+    this.logger.info(`cwd: ${workDir}\n  cmd: ${cmdLine}`);
+
     const child = spawn('claude', args, {
       cwd: workDir,
       stdio: ['ignore', 'pipe', 'pipe'],
