@@ -33,7 +33,17 @@ const event = {
   hook_event_name: 'Stop',
   session_id: sessionId,
   cwd: __dirname,
-  last_assistant_message: '## Summary\n\nI\'ve updated the **notification system** with:\n\n- `markdownToTelegramHtml()` converter\n- *Italic* and ~~strikethrough~~ support\n\n```js\nconsole.log("hello");\n```\n\nDone!',
+  last_assistant_message: `## Summary
+  
+I've updated the **notification system** with:
+
+- \`markdownToTelegramHtml()\` converter
+- *Italic* and ~~strikethrough~~ support
+
+\`\`\`js\nconsole.log("hello");
+\`\`\`
+
+Done!`,
 };
 
 // Validate Telegram credentials if Telegram is enabled

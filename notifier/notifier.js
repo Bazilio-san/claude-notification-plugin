@@ -280,6 +280,7 @@ async function sendTelegram (config, state) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (!data.ok) console.error('[telegram] HTML send failed:', JSON.stringify(data));
     if (data.ok && data.result?.message_id) {
       if (!state.sentMessages) {
         state.sentMessages = [];
@@ -689,19 +690,19 @@ process.stdin.on('end', async () => {
 
   const branch = getBranch(cwd);
   let label = `/${project}`;
-  let labelHtml = `<b>${escapeHtml(project)}</b>`;
+  let labelHtml = `/${escapeHtml(project)}`;
   if (branch) {
     label += `/${branch}`;
-    labelHtml += `/<b>${escapeHtml(branch)}</b>`;
+    labelHtml += `/${escapeHtml(branch)}`;
   }
-
+  labelHtml = `<code>${labelHtml}</code>`
   const triggerLine = config.debug ? `\nTrigger: ${eventType}` : '';
 
   const desktopTitle = label;
   const desktopMessage = desktopStatus;
 
   let telegramMessage =
-    `${statusEmoji} ${labelHtml} (duration: ${duration}s)${triggerLine}`;
+    `${statusEmoji}  ${labelHtml}\n(duration: ${duration}s)${triggerLine}`;
 
   if (config.telegram.includeLastCcMessageInTelegram && event.last_assistant_message) {
     const maxLen = 3500;
