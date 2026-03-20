@@ -80,15 +80,16 @@ Config file: `~/.claude/claude-notify.config.json`
   "notifyOnWaiting": false,
   "debug": false,
   "listener": {
+    "claudeArgs": ["--permission-mode", "auto"],
     "projects": {
       "default": {
         "path": "abs-path-to-project"
+        "claudeArgs": ["--permission-mode", "bypassPermissions"]
       },
       "alias1": {
         "path": "abs-path-to-project"
       }
     },
-    "claudeArgs": ["--permission-mode", "auto"],
     "continueSession": true,
     "worktreeBaseDir": "abs-path-to-worktrees-root",
     "autoCreateWorktree": true,
