@@ -75,7 +75,6 @@ Config file: `~/.claude/claude-notify.config.json`
     "enabled": true
   },
   "webhookUrl": "",
-  "sendUserPromptToWebhook": false,
   "notifyAfterSeconds": 15,
   "notifyOnWaiting": false,
   "debug": false,
@@ -132,11 +131,8 @@ ENV: `CLAUDE_NOTIFY_VOICE`
 **notifyOnWaiting** — Notify when Claude is waiting for input. Default: **false**
 ENV: `CLAUDE_NOTIFY_WAITING`
 
-**webhookUrl** — POST notification JSON to this URL. Payload: `title`, `project`, `branch`, `duration`, `trigger`, `voicePhrase`, `hookEvent`.
+**webhookUrl** — POST notification JSON to this URL. When set, all events (including user prompts) are sent. Set env to empty string (`""`) to disable per-project.
 ENV: `CLAUDE_NOTIFY_WEBHOOK_URL`
-
-**sendUserPromptToWebhook** — Also send user prompts to the webhook. Requires `webhookUrl`. Default: **false**
-ENV: `CLAUDE_NOTIFY_SEND_USER_PROMPT_TO_WEBHOOK`
 
 **notifyAfterSeconds** — Skip notifications for tasks shorter than this. Default: **15**
 ENV: `CLAUDE_NOTIFY_AFTER_SECONDS`
@@ -164,7 +160,6 @@ Add to `.claude/settings.local.json` in the project root:
     "CLAUDE_NOTIFY_DEBUG": 0,
     "CLAUDE_NOTIFY_INCLUDE_LAST_CC_MESSAGE_IN_TELEGRAM": 1,
     "CLAUDE_NOTIFY_WEBHOOK_URL": "",
-    "CLAUDE_NOTIFY_SEND_USER_PROMPT_TO_WEBHOOK": 0,
     "CLAUDE_NOTIFY_AFTER_SECONDS": 15
   }
 }

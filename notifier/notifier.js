@@ -61,7 +61,6 @@ function loadConfig () {
       enabled: true,
     },
     webhookUrl: '',
-    sendUserPromptToWebhook: false,
     notifyAfterSeconds: 15,
     notifyOnWaiting: false,
     debug: false,
@@ -94,9 +93,6 @@ function loadConfig () {
       }
       if (typeof user.webhookUrl === 'string') {
         config.webhookUrl = user.webhookUrl;
-      }
-      if (typeof user.sendUserPromptToWebhook === 'boolean') {
-        config.sendUserPromptToWebhook = user.sendUserPromptToWebhook;
       }
     } catch {
       // ignore malformed config
@@ -132,11 +128,8 @@ function loadConfig () {
   if (process.env.CLAUDE_NOTIFY_INCLUDE_LAST_CC_MESSAGE_IN_TELEGRAM !== undefined) {
     config.telegram.includeLastCcMessageInTelegram = process.env.CLAUDE_NOTIFY_INCLUDE_LAST_CC_MESSAGE_IN_TELEGRAM === '1';
   }
-  if (process.env.CLAUDE_NOTIFY_WEBHOOK_URL) {
+  if (process.env.CLAUDE_NOTIFY_WEBHOOK_URL !== undefined) {
     config.webhookUrl = process.env.CLAUDE_NOTIFY_WEBHOOK_URL;
-  }
-  if (process.env.CLAUDE_NOTIFY_SEND_USER_PROMPT_TO_WEBHOOK !== undefined) {
-    config.sendUserPromptToWebhook = process.env.CLAUDE_NOTIFY_SEND_USER_PROMPT_TO_WEBHOOK === '1';
   }
   if (process.env.CLAUDE_NOTIFY_AFTER_SECONDS !== undefined) {
     const val = Number(process.env.CLAUDE_NOTIFY_AFTER_SECONDS);
@@ -684,15 +677,13 @@ process.stdin.on('end', async () => {
   if (eventType === 'UserPromptSubmit') {
     state.sessions[sessionId] = { start: Date.now() };
     saveState(state);
-    if (config.sendUserPromptToWebhook) {
-      await sendWebhook(config, {
-        title: 'User prompt submitted',
-        project,
-        trigger: eventType,
-        prompt: event.prompt || '',
-        hookEvent: event,
-      });
-    }
+    await sendWebhook(config, {
+      title: 'User prompt submitted',
+      project,
+      trigger: eventType,
+      prompt: event.prompt || '',
+      hookEvent: event,
+    });
     process.exit(0);
   }
 

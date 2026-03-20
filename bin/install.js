@@ -617,7 +617,6 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
       enabled: true,
     },
     webhookUrl: '',
-    sendUserPromptToWebhook: false,
     notifyAfterSeconds: 15,
     notifyOnWaiting: false,
     debug: false,
