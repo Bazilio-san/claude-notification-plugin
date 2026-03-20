@@ -1,7 +1,7 @@
 # Telegram Listener - Detailed Guide
 
 Telegram Listener is a background daemon that receives tasks from a Telegram chat
-and executes them on your machine via `claude -p`. The result is sent back to Telegram.
+and executes them on your machine via an interactive Claude Code PTY session. The result is sent back to Telegram.
 
 **[Quick Start here](../LISTENER.md)**
 
@@ -178,11 +178,11 @@ Running two listeners is impossible — the PID file prevents it. And this is im
 │  └───────┬────────┘            │           │
 │          │                     │           │
 │  ┌───────┴────────┐    ┌───────┴───────┐   │
-│  │ MessageParser  │    │  TaskRunner   │   │
+│  │ MessageParser  │    │  PtyRunner    │   │
 │  │                │    │               │   │
-│  │ /proj/branch   │    │ spawn claude  │   │
+│  │ /proj/branch   │    │ PTY session   │   │
 │  │ /commands      │    │ timeouts      │   │
-│  └────────────────┘    │ kill          │   │
+│  └────────────────┘    │ signal files  │   │
 │                        └───────────────┘   │
 │  ┌────────────────┐    ┌───────────────┐   │
 │  │WorktreeManager │    │    Logger     │   │
@@ -199,7 +199,7 @@ Running two listeners is impossible — the PID file prevents it. And this is im
 | **TelegramPoller** | `telegram-poller.js` | Long polling to the Telegram API. Receives messages, sends replies. Splits long messages into chunks |
 | **MessageParser** | `message-parser.js` | Parses message text: is it a command (`/status`) or a task (`/proj1 fix bug`)? Extracts project, branch, task text |
 | **WorkQueue** | `work-queue.js` | Manages task queues. Each working directory has a separate FIFO queue. Guarantees: one `claude` process per directory. Persists state to disk |
-| **TaskRunner** | `task-runner.js` | Runs `claude -p "task"` as a child process. Monitors timeouts. Can kill the process on cancellation. Emits events: complete, error, timeout |
+| **PtyRunner** | `pty-runner.js` | Runs Claude in an interactive PTY session (via `node-pty`). Reuses sessions across tasks. Receives results via hook signal files. Monitors timeouts. Emits events: complete, error, timeout |
 | **WorktreeManager** | `worktree-manager.js` | Creates and removes git worktrees. Auto-discovery via `git worktree list`. Maps `/project/branch` to a path on disk |
 | **Logger** | `logger.js` | Writes operational log to `~/.claude/.cc-n-listener.log`. Rotation when exceeding 5 MB (old file → `.log.old`) |
 | **TaskLogger** | `task-logger.js` | Writes task Q&A logs (questions to Claude and answers). Separate file per project/branch. Rotation at 5 MB |
@@ -255,8 +255,8 @@ WorkQueue.enqueue(workDir, task)
        │
        ├─ workDir is free (active = null)
        │    → active = task
-       │    → TaskRunner.run(workDir, task)
-       │    → claude -p "fix bug" --output-format text
+       │    → PtyRunner.run(workDir, task)
+       │    → sends task to Claude PTY session
        │    → Telegram: "⏳ Running: fix bug"
        │
        └─ workDir is busy (active != null)
@@ -269,7 +269,7 @@ TaskRunner emit 'complete'/'error'/'timeout'
        ├─ Send result to Telegram
        └─ WorkQueue.onTaskComplete(workDir)
             ├─ Queue is empty → active = null
-            └─ More tasks → shift() → TaskRunner.run()
+            └─ More tasks → shift() → PtyRunner.run()
 ```
 
 ---
@@ -340,7 +340,7 @@ Full example of `~/.claude/claude-notify.config.json` with the listener section:
 | Parameter | Default | Description |
 |---|---|---|
 | `projects` | — (required) | Map of projects: `alias → { path, worktrees?, claudeArgs? }` |
-| `claudeArgs` | `[]` | Extra CLI args passed to `claude -p` (e.g. `["--permission-mode", "auto"]`). Can also be set per-project to override |
+| `claudeArgs` | `[]` | Extra CLI args passed to Claude (e.g. `["--permission-mode", "auto"]`). Can also be set per-project to override |
 | `continueSession` | `true` | Continue previous session context per workDir. Claude remembers previous tasks. Use `/newsession` or `/clear` to reset |
 | `worktreeBaseDir` | `~/.claude/worktrees` | Where auto-created worktrees are stored |
 | `autoCreateWorktree` | `true` | Automatically create a worktree if the branch is not found |
@@ -417,9 +417,9 @@ If the worktree doesn't exist, it will be created automatically.
 2. Parses `/project/branch` from the beginning of the message
 3. Determines the working directory (workDir)
 4. Checks: is this workDir busy with another task?
-   - **No** → runs `claude -p "task"` immediately, replies with `⏳ Running...`
+   - **No** → sends task to the PTY session immediately, replies with `⏳ Running...`
    - **Yes** → adds to the queue, replies with `📋 Queued (position N)...`
-5. When Claude finishes → sends the result to Telegram
+5. When Claude finishes (hook signal file received) → sends the result to Telegram
 6. If there's a next task in the queue → starts it
 
 ---
@@ -748,19 +748,20 @@ Shows a brief reference for all commands.
      → Yes: queue.push(task), reply with position
 
 4. EXECUTION
-   claude -p "task" --output-format text
+   Task sent to Claude PTY session
      cwd = workDir
      timeout = 30 min
    Telegram: "⏳ Running: <task>"
 
 5. WAITING
-   The claude process is working...
+   Claude is working in the PTY session...
    (listener continues accepting other messages)
+   Hook "Stop" fires → signal file written
 
 6. COMPLETION
-   claude finished:
-     exit 0 → "✅ Done" + stdout
-     exit N → "❌ Error" + stderr
+   Signal file received:
+     lastAssistantMessage → "✅ Done" + response text
+     PTY error/crash → "❌ Error"
      timeout → "⏰ Timeout"
 
 7. NEXT TASK
@@ -769,24 +770,22 @@ Shows a brief reference for all commands.
      → No: active = null, workDir is free
 ```
 
-### What Claude receives
+### How Claude runs
 
-The command that gets executed:
+The listener spawns an interactive Claude Code session in a pseudo-terminal (PTY) using `node-pty`. This is equivalent to running `claude` in a real terminal — Claude has full access to all its capabilities (hooks, tools, interactive features).
 
-```bash
-claude -p "your message text from Telegram" --output-format text [claudeArgs...]
-```
-
-With the working directory (`cwd`) = project/worktree workDir.
+The working directory (`cwd`) = project/worktree workDir.
 
 Extra CLI arguments can be configured via `claudeArgs` in config (global or per-project).
-Recommended: `["--permission-mode", "auto"]` — allows Claude to use tools (Edit, Bash, Read, etc.) without interactive prompts, matching the quality of a full interactive session.
+Recommended: `["--permission-mode", "auto"]` — allows Claude to use tools (Edit, Bash, Read, etc.) without interactive prompts.
 
 Claude sees the project files, CLAUDE.md, .claude/settings.json, and everything else as if you had launched it manually in that directory.
 
+Task results are received via Claude's `Stop` hook, which writes a signal file containing `last_assistant_message` — the clean final response (not the raw PTY output with spinners and tool calls).
+
 ### Session continuity
 
-When `continueSession` is enabled (default), the listener adds `--continue` to subsequent tasks in the same workDir. This means Claude remembers previous tasks and their context — just like working in an interactive terminal session.
+When `continueSession` is enabled (default), the listener reuses the same PTY session for subsequent tasks in the same workDir. The Claude process stays alive between tasks, preserving full context — exactly like working in an interactive terminal.
 
 Messages show session status:
 - `🆕` = new session (first task or after `/newsession`/`/clear`)
@@ -799,7 +798,7 @@ Use `/newsession` to reset the session when context gets full, or `/clear` to re
 
 ### What is returned to Telegram
 
-The `result` field from Claude's JSON output — the text response to your task.
+The `last_assistant_message` from Claude's Stop hook — the clean final response to your task.
 
 Handling long responses:
 - Up to 4096 characters — a single message
@@ -880,13 +879,13 @@ The Listener processes **only** messages from the `chatId` specified in the conf
 
 ### No shell injection
 
-Task text is passed to claude as an array argument, not through the shell:
+Task text is written to the PTY session's stdin, not passed through a shell command:
 
 ```js
-// Like this (safe):
-spawn('claude', ['-p', userText], { ... })
+// PTY session — text goes to Claude's interactive prompt:
+ptyProcess.write(taskText + '\r')
 
-// NOT like this (dangerous):
+// NOT through shell interpolation:
 exec(`claude -p "${userText}"`)
 ```
 
@@ -942,8 +941,7 @@ The watchdog will automatically clear stale tasks on the next startup.
 
 ### Claude gives low-quality responses (doesn't edit files, just describes what to do)
 
-By default `claude -p` runs without tool permissions — Claude can't use Edit, Bash, Read, etc.
-Add `claudeArgs` to your listener config:
+Add `claudeArgs` to your listener config to grant tool permissions:
 
 ```json
 "listener": {
@@ -1020,8 +1018,8 @@ You (terminal): claude-notify listener start
 You: /api add endpoint GET /users with pagination
 Bot: ⏳ [/api] Running: add endpoint GET /users with pagination
 
-    Behind the scenes: process started
-    claude -p "add endpoint GET /users with pagination" --output-format text
+    Behind the scenes: PTY session created
+    claude (interactive PTY) → task sent
     cwd = /home/user/projects/api
 
 === 10:02 — Task to another project (in parallel!) ===
@@ -1029,7 +1027,7 @@ Bot: ⏳ [/api] Running: add endpoint GET /users with pagination
 You: /web add a /users page that calls GET /users
 Bot: ⏳ [/web] Running: add a /users page that calls GET /users
 
-    Now two claude processes are running in parallel:
+    Now two PTY sessions are running in parallel:
     one in /home/user/projects/api, another in /home/user/projects/web
 
 === 10:03 — Another task for api (queued) ===
@@ -1044,7 +1042,7 @@ You: /api/feature/auth add JWT authorization middleware
 Bot: 🌿 Created worktree feature/auth for project "api"
      ⏳ [/api/feature/auth] Running: add JWT authorization middleware
 
-    Three claude processes running in parallel:
+    Three PTY sessions running in parallel:
     1. api/main     → GET /users
     2. api/auth     → JWT middleware
     3. web/main     → /users page

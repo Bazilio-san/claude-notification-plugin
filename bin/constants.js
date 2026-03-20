@@ -13,6 +13,9 @@ export const RESOLVER_FILENAME = 'claude-notify-resolve.js';
 export const LISTENER_LOG_FILENAME = '.cc-n-listener.log';
 export const INSTALL_LOG_FILENAME = 'claude-notify-install.log';
 
+// PTY signal directory
+export const PTY_SIGNAL_DIR = path.join(CLAUDE_DIR, 'pty-signals');
+
 // Full paths
 export const CONFIG_PATH = path.join(CLAUDE_DIR, CONFIG_FILENAME);
 export const STATE_PATH = path.join(CLAUDE_DIR, STATE_FILENAME);

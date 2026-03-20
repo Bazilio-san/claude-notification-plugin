@@ -8,7 +8,7 @@ import { createLogger } from './logger.js';
 import { createTaskLogger } from './task-logger.js';
 import { TelegramPoller, escapeHtml } from './telegram-poller.js';
 import { WorkQueue } from './work-queue.js';
-import { TaskRunner } from './task-runner.js';
+import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { parseMessage, parseTarget } from './message-parser.js';
 import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME } from '../bin/constants.js';
@@ -99,7 +99,9 @@ const queue = new WorkQueue(
 const taskLogDir = config.listener?.taskLogDir || listenerLogDir;
 fs.mkdirSync(taskLogDir, { recursive: true });
 const taskLogger = createTaskLogger(taskLogDir);
-const runner = new TaskRunner(logger, taskTimeout, taskLogger);
+
+const runner = new PtyRunner(logger, taskTimeout, taskLogger);
+
 const worktreeManager = new WorktreeManager(config, logger);
 
 const startTime = Date.now();
@@ -308,8 +310,8 @@ async function startTask (workDir, task) {
   task.runningMessageId = runningMsgId;
   const claudeArgs = getClaudeArgs(entry?.project);
   try {
-    const started = runner.run(workDir, task, claudeArgs, continueSession);
-    queue.markStarted(workDir, started.pid);
+    runner.run(workDir, task, claudeArgs, continueSession);
+    queue.markStarted(workDir, task.pid || 0);
   } catch (err) {
     logger.error(`Failed to start task: ${err.message}`);
     poller.sendMessage(`❌  <code>${label}</code>\nFailed to start: ${escapeHtml(err.message)}`);

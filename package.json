@@ -1,7 +1,7 @@
 {
   "name": "claude-notification-plugin",
   "productName": "claude-notification-plugin",
-  "version": "1.1.31",
+  "version": "1.1.32",
   "description": "Claude Code task-completion notifications: Telegram, desktop notifications (Windows/macOS/Linux), sound, and voice",
   "type": "module",
   "engines": {
@@ -51,7 +51,8 @@
     "access": "public"
   },
   "dependencies": {
-    "node-notifier": "^10.0.1"
+    "node-notifier": "^10.0.1",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "eslint-plugin-import": "^2.31.0",

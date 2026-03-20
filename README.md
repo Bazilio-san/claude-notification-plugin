@@ -171,7 +171,7 @@ Add to `.claude/settings.local.json` in the project root:
 
 ## Telegram Listener
 
-Background daemon that receives tasks from Telegram and executes them via `claude -p`. The result is sent back to Telegram.
+Background daemon that receives tasks from Telegram and executes them via an interactive Claude Code PTY session. The result is sent back to Telegram.
 
 The Listener uses the same bot and `chatId` as notifications.
 
@@ -259,7 +259,7 @@ All commands start with `/` and execute instantly (not queued).
 | Parameter            | Default               | Description                                                                            |
 |----------------------|-----------------------|----------------------------------------------------------------------------------------|
 | `projects`           | (required)            | Map of projects: `alias → { path }`                                                    |
-| `claudeArgs`         | `[]`                  | Extra CLI args for `claude -p` (e.g. `["--permission-mode", "auto"]`)                  |
+| `claudeArgs`         | `[]`                  | Extra CLI args for Claude (e.g. `["--permission-mode", "auto"]`)                       |
 | `continueSession`    | `true`                | Continue previous session context (`--continue` flag). Claude remembers previous tasks |
 | `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored                                                |
 | `autoCreateWorktree` | `true`                | Auto-create worktrees for unknown branches                                             |

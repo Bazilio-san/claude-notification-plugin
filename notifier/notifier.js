@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import process from 'process';
 import { execSync, spawn } from 'child_process';
-import { CONFIG_PATH, STATE_PATH } from '../bin/constants.js';
+import { CONFIG_PATH, STATE_PATH, PTY_SIGNAL_DIR } from '../bin/constants.js';
 
 // ----------------------
 // CONFIG
@@ -158,9 +158,31 @@ function isNotifierDisabled () {
     return true;
   }
   // Skip notifications for listener-spawned tasks unless explicitly enabled
-  return process.env.CLAUDE_NOTIFY_FROM_LISTENER === '1'
-    && process.env.CLAUDE_NOTIFY_AFTER_LISTENER !== '1';
+  if (process.env.CLAUDE_NOTIFY_FROM_LISTENER === '1'
+    && process.env.CLAUDE_NOTIFY_AFTER_LISTENER !== '1') {
+    return 'listener-only';
+  }
+  return false;
+}
 
+function writePtySignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  const cwd = event.cwd || process.cwd();
+  try {
+    fs.mkdirSync(PTY_SIGNAL_DIR, { recursive: true });
+    const signalFile = path.join(PTY_SIGNAL_DIR, `${sessionId}.json`);
+    fs.writeFileSync(signalFile, JSON.stringify({
+      sessionId,
+      cwd,
+      lastAssistantMessage: event.last_assistant_message || '',
+      cost: event.total_cost_usd || 0,
+      numTurns: event.num_turns || 0,
+      durationMs: event.duration_ms || 0,
+      timestamp: Date.now(),
+    }));
+  } catch {
+    // silent fail
+  }
 }
 
 // ----------------------
@@ -280,7 +302,9 @@ async function sendTelegram (config, state) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!data.ok) console.error('[telegram] HTML send failed:', JSON.stringify(data));
+    if (!data.ok) {
+      console.error('[telegram] HTML send failed:', JSON.stringify(data));
+    }
     if (data.ok && data.result?.message_id) {
       if (!state.sentMessages) {
         state.sentMessages = [];
@@ -637,7 +661,16 @@ process.stdin.on('end', async () => {
   const project = path.basename(cwd);
   const sessionId = event.session_id || 'default';
 
-  if (isNotifierDisabled()) {
+  const disabled = isNotifierDisabled();
+  if (disabled === true) {
+    process.exit(0);
+  }
+
+  // For listener-only mode: write PTY signal file on Stop, then exit
+  if (disabled === 'listener-only') {
+    if (eventType === 'Stop') {
+      writePtySignalFile(event);
+    }
     process.exit(0);
   }
 
@@ -695,7 +728,7 @@ process.stdin.on('end', async () => {
     label += `/${branch}`;
     labelHtml += `/${escapeHtml(branch)}`;
   }
-  labelHtml = `<code>${labelHtml}</code>`
+  labelHtml = `<code>${labelHtml}</code>`;
   const triggerLine = config.debug ? `\nTrigger: ${eventType}` : '';
 
   const desktopTitle = label;
