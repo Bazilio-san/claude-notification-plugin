@@ -293,6 +293,11 @@ export class PtyRunner extends EventEmitter {
     // Filter out pipe-mode-specific args
     const args = claudeArgs.filter(a => a !== '-p' && a !== '--output-format' && a !== 'json');
 
+    // Ensure --permission-mode is set (default: auto) to prevent interactive permission prompts
+    if (!args.includes('--permission-mode')) {
+      args.push('--permission-mode', 'auto');
+    }
+
     this.logger.info(`Creating PTY session in ${workDir} with args: ${JSON.stringify(args)}`);
 
     const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
