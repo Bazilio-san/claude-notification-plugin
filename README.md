@@ -251,7 +251,8 @@ All commands start with `/` and execute instantly (not queued).
 | `/pty [/project[/branch]]`    | PTY session diagnostics (state, buffer, output) |
 | `/history`                    | Recent task history                  |
 | `/stop`                       | Stop the listener                    |
-| `/help`                       | Show help                            |
+| `/menu`                       | Show inline button menu              |
+| `/help`                       | Show help with inline buttons        |
 
 ### Listener configuration
 

@@ -16,7 +16,7 @@ export class TelegramPoller {
 
   async flush () {
     try {
-      const url = `${this.baseUrl}/getUpdates?offset=-1&timeout=0&allowed_updates=["message"]`;
+      const url = `${this.baseUrl}/getUpdates?offset=-1&timeout=0&allowed_updates=${encodeURIComponent('["message","callback_query"]')}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
       const data = await res.json();
       if (data.ok && data.result?.length) {
@@ -34,7 +34,7 @@ export class TelegramPoller {
     }
 
     try {
-      const url = `${this.baseUrl}/getUpdates?offset=${this.offset}&timeout=${POLL_TIMEOUT}&allowed_updates=["message"]`;
+      const url = `${this.baseUrl}/getUpdates?offset=${this.offset}&timeout=${POLL_TIMEOUT}&allowed_updates=${encodeURIComponent('["message","callback_query"]')}`;
       const res = await fetch(url, { signal: AbortSignal.timeout((POLL_TIMEOUT + 10) * 1000) });
       const data = await res.json();
       if (!data.ok) {
@@ -52,6 +52,23 @@ export class TelegramPoller {
       const messages = [];
       for (const update of data.result || []) {
         this.offset = update.update_id + 1;
+
+        // Handle callback_query (inline button press)
+        const cb = update.callback_query;
+        if (cb) {
+          if (String(cb.message?.chat?.id) !== this.chatId) {
+            continue;
+          }
+          messages.push({
+            messageId: cb.message.message_id,
+            text: cb.data,
+            chatId: cb.message.chat.id,
+            date: cb.message.date,
+            callbackQueryId: cb.id,
+          });
+          continue;
+        }
+
         const msg = update.message;
         if (!msg || !msg.text) {
           continue;
@@ -83,7 +100,7 @@ export class TelegramPoller {
     this._errorBackoff = Math.min(1000 * Math.pow(2, this._consecutiveErrors - 1), 30000);
   }
 
-  async sendMessage (text, replyToMessageId) {
+  async sendMessage (text, replyToMessageId, replyMarkup) {
     const chunks = splitMessage(text);
     let firstMessageId = null;
     for (const chunk of chunks) {
@@ -95,6 +112,10 @@ export class TelegramPoller {
         };
         if (replyToMessageId) {
           body.reply_to_message_id = replyToMessageId;
+        }
+        // Attach inline keyboard only to the last chunk
+        if (replyMarkup && chunk === chunks[chunks.length - 1]) {
+          body.reply_markup = replyMarkup;
         }
         const res = await fetch(`${this.baseUrl}/sendMessage`, {
           method: 'POST',
@@ -125,6 +146,22 @@ export class TelegramPoller {
       }
     }
     return firstMessageId;
+  }
+
+  async answerCallbackQuery (callbackQueryId, text) {
+    try {
+      const body = { callback_query_id: callbackQueryId };
+      if (text) {
+        body.text = text;
+      }
+      await fetch(`${this.baseUrl}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      this.logger.error(`answerCallbackQuery error: ${err.message}`);
+    }
   }
 
   async deleteMessage (messageId) {

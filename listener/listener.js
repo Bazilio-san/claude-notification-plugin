@@ -418,6 +418,8 @@ async function handleCommand (cmd, args) {
       return handleStop();
     case '/help':
       return handleHelp();
+    case '/menu':
+      return handleMenu();
     default:
       return `Unknown command: ${cmd}`;
   }
@@ -432,8 +434,12 @@ function handleStatus (args) {
       return `📊 Project "${target.project}": no active queues`;
     }
     let text = `📊 Project "<b>${escapeHtml(target.project)}</b>":\n`;
+    const buttons = [];
     for (const s of statuses) {
       const branchLabel = s.branch || 'main';
+      const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
+        ? `/${target.project}/${s.branch}`
+        : `/${target.project}`;
       if (s.active) {
         const elapsed = s.active.startedAt
           ? formatDuration(Date.now() - new Date(s.active.startedAt).getTime())
@@ -441,10 +447,20 @@ function handleStatus (args) {
         text += `\n<b>${escapeHtml(branchLabel)}</b>:\n`;
         text += `  ▶ ${escapeHtml(s.active.text)} (${elapsed})\n`;
         text += `  Queue: ${s.queueLength} tasks\n`;
+        buttons.push([
+          { text: `🛑 Cancel ${label}`, callback_data: `/cancel ${label}` },
+          { text: `🧹 Clear ${label}`, callback_data: `/clear ${label}` },
+        ]);
       } else {
         text += `\n<b>${escapeHtml(branchLabel)}</b>: ✅ idle\n`;
         text += `  Queue: ${s.queueLength} tasks\n`;
       }
+      buttons.push([
+        { text: `🆕 New session ${label}`, callback_data: `/newsession ${label}` },
+      ]);
+    }
+    if (buttons.length > 0) {
+      return { text, replyMarkup: { inline_keyboard: buttons } };
     }
     return text;
   }
@@ -459,10 +475,14 @@ function handleStatus (args) {
   let text = '📊 <b>Status:</b>\n';
   const uptime = formatDuration(Date.now() - startTime);
   text += `Uptime: ${uptime}\n`;
+  const buttons = [];
   for (const [project, statuses] of Object.entries(all)) {
     text += `\n<b>${escapeHtml(project)}</b>:`;
     for (const s of statuses) {
       const branchLabel = s.branch || 'main';
+      const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
+        ? `/${project}/${s.branch}`
+        : `/${project}`;
       if (s.active) {
         const elapsed = s.active.startedAt
           ? formatDuration(Date.now() - new Date(s.active.startedAt).getTime())
@@ -471,10 +491,20 @@ function handleStatus (args) {
         if (s.queueLength > 0) {
           text += ` +${s.queueLength} queued`;
         }
+        buttons.push([
+          { text: `🛑 Cancel ${label}`, callback_data: `/cancel ${label}` },
+          { text: `🧹 Clear ${label}`, callback_data: `/clear ${label}` },
+        ]);
       } else {
         text += `\n  ${escapeHtml(branchLabel)}: ✅ idle`;
       }
+      buttons.push([
+        { text: `🆕 New session ${label}`, callback_data: `/newsession ${label}` },
+      ]);
     }
+  }
+  if (buttons.length > 0) {
+    return { text, replyMarkup: { inline_keyboard: buttons } };
   }
   return text;
 }
@@ -771,8 +801,28 @@ async function handleStop () {
   return null; // Message already sent
 }
 
+const MENU_KEYBOARD = {
+  inline_keyboard: [
+    [
+      { text: '📊 Status', callback_data: '/status' },
+      { text: '📋 Queue', callback_data: '/queue' },
+      { text: '📂 Projects', callback_data: '/projects' },
+    ],
+    [
+      { text: '📜 History', callback_data: '/history' },
+      { text: '🖥 PTY', callback_data: '/pty' },
+      { text: '📖 Help', callback_data: '/help' },
+    ],
+  ],
+};
+
+function handleMenu () {
+  return { text: '📖 <b>Menu:</b>', replyMarkup: MENU_KEYBOARD };
+}
+
 function handleHelp () {
-  return `<b>📖 Commands:</b>
+  return {
+    text: `<b>📖 Commands:</b>
 
 /status — status of all projects
 /status /project — project status
@@ -788,6 +838,7 @@ function handleHelp () {
 /pty [/project[/branch]] — PTY session diagnostics
 /history — task history
 /stop — stop listener
+/menu — command buttons
 /help — this help
 
 <b>Tasks:</b>
@@ -797,7 +848,9 @@ function handleHelp () {
 
 <b>Session:</b>
 🆕 = new session, 🔄 = continuing session
-ctx N% = context window usage`;
+ctx N% = context window usage`,
+    replyMarkup: MENU_KEYBOARD,
+  };
 }
 
 // ----------------------
@@ -891,6 +944,11 @@ async function mainLoop () {
     try {
       const messages = await poller.getUpdates();
       for (const msg of messages) {
+        // Answer callback query (Telegram requires this)
+        if (msg.callbackQueryId) {
+          await poller.answerCallbackQuery(msg.callbackQueryId);
+        }
+
         const parsed = parseMessage(msg.text);
         if (!parsed) {
           continue;
@@ -900,7 +958,11 @@ async function mainLoop () {
           logger.info(`Command: ${parsed.cmd} ${parsed.args}`);
           const response = await handleCommand(parsed.cmd, parsed.args);
           if (response) {
-            await poller.sendMessage(response, msg.messageId);
+            if (typeof response === 'object' && response.text) {
+              await poller.sendMessage(response.text, msg.callbackQueryId ? null : msg.messageId, response.replyMarkup);
+            } else {
+              await poller.sendMessage(response, msg.callbackQueryId ? null : msg.messageId);
+            }
           }
         } else if (parsed.type === 'task') {
           logger.info(`Task for /${parsed.project}${parsed.branch ? '/' + parsed.branch : ''}: ${parsed.text}`);
