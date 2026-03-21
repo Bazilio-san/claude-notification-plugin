@@ -145,6 +145,43 @@ export class TelegramPoller {
     }
   }
 
+  async editMessage (messageId, text) {
+    if (!messageId) {
+      return false;
+    }
+    try {
+      const res = await fetch(`${this.baseUrl}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: this.chatId,
+          message_id: messageId,
+          text,
+          parse_mode: 'HTML',
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        // Retry without HTML parse mode if formatting fails
+        const res2 = await fetch(`${this.baseUrl}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: this.chatId,
+            message_id: messageId,
+            text,
+          }),
+        });
+        const data2 = await res2.json();
+        return data2.ok;
+      }
+      return true;
+    } catch (err) {
+      this.logger.error(`editMessage error: ${err.message}`);
+      return false;
+    }
+  }
+
   async sendDocument (buffer, filename, caption) {
     try {
       const formData = new FormData();
@@ -200,4 +237,19 @@ function splitMessage (text) {
   return chunks;
 }
 
-export { escapeHtml };
+// Strip ANSI escape codes and common terminal control sequences from PTY output
+function stripAnsi (text) {
+  return text
+    // ANSI escape sequences (colors, cursor, etc.)
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    // OSC sequences (title setting, hyperlinks, etc.)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // Other escape sequences
+    .replace(/\x1b[^[\]]/g, '')
+    // Carriage returns (overwrite lines)
+    .replace(/\r/g, '')
+    // Remaining control chars except newline and tab
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
+export { escapeHtml, stripAnsi };

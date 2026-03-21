@@ -433,6 +433,14 @@ export class PtyRunner extends EventEmitter {
   }
 
   /**
+   * Get the raw PTY buffer for a workDir.
+   */
+  getBuffer (workDir) {
+    const session = this.sessions.get(workDir);
+    return session?._buffer || '';
+  }
+
+  /**
    * Cancel all active tasks (for graceful shutdown).
    */
   cancelAll () {

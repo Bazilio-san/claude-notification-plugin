@@ -96,7 +96,9 @@ Config file: `~/.claude/claude-notify.config.json`
     "maxQueuePerWorkDir": 10,
     "maxTotalTasks": 50,
     "logDir": "abs-path-to-listener-logs",
-    "taskLogDir": "abs-path-to-task-logs"
+    "taskLogDir": "abs-path-to-task-logs",
+    "liveConsole": true,
+    "liveConsoleInterval": 5
   }
 }
 ```
@@ -264,6 +266,8 @@ All commands start with `/` and execute instantly (not queued).
 | `maxTotalTasks`      | `50`                  | Max tasks across all queues                                                            |
 | `logDir`             | `~/.claude`           | Listener log directory                                                                 |
 | `taskLogDir`         | same as `logDir`      | Task Q&A log directory                                                                 |
+| `liveConsole`        | `true`                | Stream PTY output to the "Running..." Telegram message in real-time                    |
+| `liveConsoleInterval`| `5`                   | Live console update interval in seconds                                                |
 
 ### Projects and worktrees
 

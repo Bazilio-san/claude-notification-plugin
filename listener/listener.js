@@ -6,7 +6,7 @@ import path from 'path';
 import process from 'process';
 import { createLogger } from './logger.js';
 import { createTaskLogger } from './task-logger.js';
-import { TelegramPoller, escapeHtml } from './telegram-poller.js';
+import { TelegramPoller, escapeHtml, stripAnsi } from './telegram-poller.js';
 import { WorkQueue } from './work-queue.js';
 import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
@@ -104,16 +104,23 @@ const runner = new PtyRunner(logger, taskTimeout, taskLogger);
 
 const worktreeManager = new WorktreeManager(config, logger);
 
+const liveConsoleEnabled = listenerConfig.liveConsole !== false; // default: true
+const liveConsoleInterval = (listenerConfig.liveConsoleInterval || 5) * 1000;
+const LIVE_CONSOLE_MAX_OUTPUT = 3000;
+
 const startTime = Date.now();
 
 // Session tracking per workDir: { taskCount, lastSessionId, lastContextPct }
 const sessions = new Map();
 // WorkDirs that should start a fresh session on next task
 const freshSessionDirs = new Set();
+// Live console intervals per workDir
+const liveConsoleTimers = new Map();
 
 logger.info('Listener started');
 logger.info(`Projects: ${JSON.stringify(Object.keys(listenerConfig.projects))}`);
 logger.info(`Session continuity: ${continueSessionEnabled ? 'enabled' : 'disabled'}`);
+logger.info(`Live console: ${liveConsoleEnabled ? `enabled (${liveConsoleInterval / 1000}s interval)` : 'disabled'}`);
 
 // ----------------------
 // DISCOVER WORKTREES ON START
@@ -139,6 +146,7 @@ for (const { workDir, next } of recovered) {
 // ----------------------
 
 runner.on('complete', async (workDir, task, result) => {
+  stopLiveConsole(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
 
@@ -209,6 +217,7 @@ runner.on('complete', async (workDir, task, result) => {
 });
 
 runner.on('error', async (workDir, task, errorMsg) => {
+  stopLiveConsole(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
 
@@ -227,6 +236,7 @@ runner.on('error', async (workDir, task, errorMsg) => {
 });
 
 runner.on('timeout', async (workDir, task) => {
+  stopLiveConsole(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
   const timeoutMin = Math.round(taskTimeout / 60000);
@@ -278,6 +288,55 @@ function shouldContinueSession (workDir) {
   return sessions.has(workDir);
 }
 
+function startLiveConsole (workDir, messageId, header) {
+  stopLiveConsole(workDir);
+  if (!liveConsoleEnabled || !messageId) {
+    return;
+  }
+  let lastSentText = '';
+  const timer = setInterval(async () => {
+    try {
+      const raw = runner.getBuffer(workDir);
+      if (!raw) {
+        return;
+      }
+      const cleaned = stripAnsi(raw)
+        .split('\n')
+        .map((l) => l.trimEnd())
+        .filter((l) => l.length > 0)
+        .join('\n');
+      if (!cleaned) {
+        return;
+      }
+      // Take the tail that fits
+      const tail = cleaned.length > LIVE_CONSOLE_MAX_OUTPUT
+        ? cleaned.slice(-LIVE_CONSOLE_MAX_OUTPUT)
+        : cleaned;
+      // Trim to last complete line if we sliced mid-line
+      const output = cleaned.length > LIVE_CONSOLE_MAX_OUTPUT
+        ? tail.slice(tail.indexOf('\n') + 1)
+        : tail;
+      if (!output || output === lastSentText) {
+        return;
+      }
+      lastSentText = output;
+      const text = `${header}\n\n<pre>${escapeHtml(output)}</pre>`;
+      await poller.editMessage(messageId, text);
+    } catch {
+      // ignore edit errors — message may have been deleted
+    }
+  }, liveConsoleInterval);
+  liveConsoleTimers.set(workDir, timer);
+}
+
+function stopLiveConsole (workDir) {
+  const timer = liveConsoleTimers.get(workDir);
+  if (timer) {
+    clearInterval(timer);
+    liveConsoleTimers.delete(workDir);
+  }
+}
+
 async function startTask (workDir, task) {
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
@@ -308,6 +367,7 @@ async function startTask (workDir, task) {
   }
 
   task.runningMessageId = runningMsgId;
+  startLiveConsole(workDir, runningMsgId, runningFull);
   const claudeArgs = getClaudeArgs(entry?.project);
   try {
     runner.run(workDir, task, claudeArgs, continueSession);
@@ -752,6 +812,9 @@ let running = true;
 process.on('SIGTERM', () => {
   logger.info('Received SIGTERM');
   running = false;
+  for (const wd of liveConsoleTimers.keys()) {
+    stopLiveConsole(wd);
+  }
   runner.cancelAll();
   setTimeout(() => process.exit(0), 2000);
 });
@@ -759,6 +822,9 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   logger.info('Received SIGINT');
   running = false;
+  for (const wd of liveConsoleTimers.keys()) {
+    stopLiveConsole(wd);
+  }
   runner.cancelAll();
   setTimeout(() => process.exit(0), 2000);
 });
