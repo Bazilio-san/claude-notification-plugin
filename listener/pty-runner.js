@@ -233,15 +233,37 @@ export class PtyRunner extends EventEmitter {
     // Set up marker wait + timeout
     const markerPromise = this._waitForMarker(pendingId, this.timeout);
 
-    // Send the task text to the PTY using bracketed paste mode.
-    // Without this, newlines in the text are interpreted as Enter keypresses,
-    // splitting the prompt into multiple submissions and breaking the flow.
-    session.pty.write(`\x1b[200~${task.text}\x1b[201~\r`);
+    // Send the task text to the PTY.
+    // Bracketed paste mode (\x1b[200~...\x1b[201~) causes Claude to hang in ConPTY,
+    // so we send raw text. For multiline messages, use backslash + Enter as line
+    // continuation (Claude Code interprets \ + Enter as a newline within the prompt),
+    // with delays between lines so Claude can process each one.
+    const lines = task.text.split(/\r?\n/);
+    const writeLines = async () => {
+      if (lines.length === 1) {
+        session.pty.write(`${lines[0]}\r`);
+      } else {
+        for (let i = 0; i < lines.length; i++) {
+          if (i > 0) {
+            await new Promise(r => setTimeout(r, 300));
+          }
+          if (i < lines.length - 1) {
+            session.pty.write(`${lines[i]}\\\r`);
+          } else {
+            session.pty.write(`${lines[i]}\r`);
+          }
+        }
+        // Extra Enter to submit the multiline prompt
+        await new Promise(r => setTimeout(r, 300));
+        session.pty.write('\r');
+      }
+    };
+    writeLines();
     this.logger.info(`PTY task sent to ${workDir}: ${task.text.slice(0, 100)}`);
 
     // Monitor PTY output for fatal errors that prevent task completion
     const errorPatterns = [
-      { pattern: 'auto mode temporarily unavailable', msg: 'Claude auto mode temporarily unavailable' },
+      { pattern: 'auto mode temporarily unavailable', msg: 'Claude auto mode temporarily unavailable — retry later' },
       { pattern: 'Session expired', msg: 'Claude session expired' },
       { pattern: 'Authentication required', msg: 'Claude authentication required' },
     ];
