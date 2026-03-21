@@ -10,6 +10,8 @@ export class TelegramPoller {
     this.logger = logger;
     this.baseUrl = `https://api.telegram.org/bot${token}`;
     this.offset = 0;
+    this._errorBackoff = 0; // current backoff in ms (0 = no backoff)
+    this._consecutiveErrors = 0;
   }
 
   async flush () {
@@ -26,14 +28,27 @@ export class TelegramPoller {
   }
 
   async getUpdates () {
+    // Apply backoff delay if we've had consecutive errors
+    if (this._errorBackoff > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this._errorBackoff));
+    }
+
     try {
       const url = `${this.baseUrl}/getUpdates?offset=${this.offset}&timeout=${POLL_TIMEOUT}&allowed_updates=["message"]`;
       const res = await fetch(url, { signal: AbortSignal.timeout((POLL_TIMEOUT + 10) * 1000) });
       const data = await res.json();
       if (!data.ok) {
         this.logger.error(`getUpdates failed: ${JSON.stringify(data)}`);
+        this._applyBackoff();
         return [];
       }
+      // Success — reset backoff
+      if (this._consecutiveErrors > 0) {
+        this.logger.info('getUpdates recovered after errors');
+      }
+      this._consecutiveErrors = 0;
+      this._errorBackoff = 0;
+
       const messages = [];
       for (const update of data.result || []) {
         this.offset = update.update_id + 1;
@@ -55,10 +70,17 @@ export class TelegramPoller {
       return messages;
     } catch (err) {
       if (err.name !== 'TimeoutError' && err.name !== 'AbortError') {
-        this.logger.error(`getUpdates error: ${err.message}`);
+        this._applyBackoff();
+        this.logger.error(`getUpdates error: ${err.message} (retry in ${Math.round(this._errorBackoff / 1000)}s)`);
       }
       return [];
     }
+  }
+
+  _applyBackoff () {
+    this._consecutiveErrors++;
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    this._errorBackoff = Math.min(1000 * Math.pow(2, this._consecutiveErrors - 1), 30000);
   }
 
   async sendMessage (text, replyToMessageId) {
