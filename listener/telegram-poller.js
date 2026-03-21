@@ -237,14 +237,14 @@ function splitMessage (text) {
   return chunks;
 }
 
-// Strip ANSI escape codes and common terminal control sequences from PTY output
+// Strip ANSI escape codes and terminal control sequences from PTY output
 function stripAnsi (text) {
   return text
-    // ANSI escape sequences (colors, cursor, etc.)
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-    // OSC sequences (title setting, hyperlinks, etc.)
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-    // Other escape sequences
+    // CSI sequences: \x1b[ followed by optional ?/>/! prefix, params, and terminator
+    .replace(/\x1b\[[?>=!]?[0-9;]*[a-zA-Z~]/g, '')
+    // OSC sequences: \x1b] ... (terminated by BEL or ST)
+    .replace(/\x1b][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // Other two-char escape sequences (\x1b followed by any single char)
     .replace(/\x1b[^[\]]/g, '')
     // Carriage returns (overwrite lines)
     .replace(/\r/g, '')
@@ -252,4 +252,59 @@ function stripAnsi (text) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 }
 
-export { escapeHtml, stripAnsi };
+// Clean PTY output for display: strip ANSI + remove Claude Code UI chrome
+function cleanPtyOutput (raw) {
+  const stripped = stripAnsi(raw);
+  const lines = stripped.split('\n');
+  const cleaned = [];
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    // Skip empty lines
+    if (!trimmed) {
+      continue;
+    }
+    // Skip Claude Code UI: logo, banner, horizontal rules, prompts, status
+    if (/^[▐▝▘▛▜█▌▀▄░▒▓\s]+$/.test(trimmed)) {
+      continue;
+    }
+    if (/^[─━═╌┄]+$/.test(trimmed)) {
+      continue;
+    }
+    if (/^❯\s/.test(trimmed)) {
+      continue;
+    }
+    if (/^[⏵⏴]\s*[⏵⏴]?\s*(bypass|auto|plan|permissions?)/i.test(trimmed)) {
+      continue;
+    }
+    if (/^◐\s/.test(trimmed) || /^\s*◐\s/.test(trimmed)) {
+      continue;
+    }
+    if (/Pasting\s*text/i.test(trimmed)) {
+      continue;
+    }
+    if (/^Claude\s*Code\s*v/i.test(trimmed)) {
+      continue;
+    }
+    if (/Opus|Sonnet|Haiku|Claude\s*Max/i.test(trimmed) && trimmed.length < 80) {
+      continue;
+    }
+    if (/shift\+tab\s*to\s*cycle/i.test(trimmed)) {
+      continue;
+    }
+    if (/ctrl\+[a-z]\s+to\s/i.test(trimmed)) {
+      continue;
+    }
+    if (/^Try\s*"/.test(trimmed)) {
+      continue;
+    }
+    // Skip lines that are mostly box-drawing or block chars (>50%)
+    const specialChars = (trimmed.match(/[▐▝▘▛▜█▌▀▄░▒▓─━═╌┄│┃┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/g) || []).length;
+    if (specialChars > trimmed.length * 0.5) {
+      continue;
+    }
+    cleaned.push(trimmed);
+  }
+  return cleaned.join('\n');
+}
+
+export { escapeHtml, stripAnsi, cleanPtyOutput };

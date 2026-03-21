@@ -6,7 +6,7 @@ import path from 'path';
 import process from 'process';
 import { createLogger } from './logger.js';
 import { createTaskLogger } from './task-logger.js';
-import { TelegramPoller, escapeHtml, stripAnsi } from './telegram-poller.js';
+import { TelegramPoller, escapeHtml, cleanPtyOutput } from './telegram-poller.js';
 import { WorkQueue } from './work-queue.js';
 import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
@@ -100,7 +100,7 @@ const taskLogDir = config.listener?.taskLogDir || listenerLogDir;
 fs.mkdirSync(taskLogDir, { recursive: true });
 const taskLogger = createTaskLogger(taskLogDir);
 
-const runner = new PtyRunner(logger, taskTimeout, taskLogger);
+const runner = new PtyRunner(logger, taskTimeout, taskLogger, taskLogDir);
 
 const worktreeManager = new WorktreeManager(config, logger);
 
@@ -300,11 +300,7 @@ function startLiveConsole (workDir, messageId, header) {
       if (!raw) {
         return;
       }
-      const cleaned = stripAnsi(raw)
-        .split('\n')
-        .map((l) => l.trimEnd())
-        .filter((l) => l.length > 0)
-        .join('\n');
+      const cleaned = cleanPtyOutput(raw);
       if (!cleaned) {
         return;
       }
@@ -320,10 +316,11 @@ function startLiveConsole (workDir, messageId, header) {
         return;
       }
       lastSentText = output;
-      const text = `${header}\n\n<pre>${escapeHtml(output)}</pre>`;
+      const elapsed = formatDuration(Date.now() - new Date(runner.getActive(workDir)?.startedAt || Date.now()).getTime());
+      const text = `${header}\n<i>${elapsed}</i>\n\n<pre>${escapeHtml(output)}</pre>`;
       await poller.editMessage(messageId, text);
-    } catch {
-      // ignore edit errors — message may have been deleted
+    } catch (err) {
+      logger.warn(`Live console edit error: ${err.message}`);
     }
   }, liveConsoleInterval);
   liveConsoleTimers.set(workDir, timer);
@@ -415,6 +412,8 @@ async function handleCommand (cmd, args) {
       return handleRemoveWorktree(args);
     case '/history':
       return handleHistory();
+    case '/pty':
+      return handlePty(args);
     case '/stop':
       return handleStop();
     case '/help':
@@ -691,6 +690,63 @@ function handleRemoveWorktree (args) {
   }
 }
 
+function handlePty (args) {
+  const target = parseTarget(args);
+
+  if (target) {
+    let workDir;
+    try {
+      workDir = worktreeManager.resolveWorkDir(target.project, target.branch);
+    } catch (err) {
+      return `❌ ${escapeHtml(err.message)}`;
+    }
+    const info = runner.getSessionInfo(workDir);
+    if (!info) {
+      return `🖥 No PTY session for /${escapeHtml(target.project)}${target.branch ? '/' + escapeHtml(target.branch) : ''}`;
+    }
+    return formatPtyInfo(target.project, target.branch, workDir, info);
+  }
+
+  // All sessions
+  const allInfo = runner.getAllSessionInfo();
+  if (Object.keys(allInfo).length === 0) {
+    return '🖥 No active PTY sessions';
+  }
+
+  let text = '🖥 <b>PTY Sessions:</b>\n';
+  for (const [workDir, info] of Object.entries(allInfo)) {
+    const entry = queue.queues[workDir];
+    const project = entry?.project || '?';
+    const branch = entry?.branch || null;
+    text += '\n' + formatPtyInfo(project, branch, workDir, info);
+  }
+  return text;
+}
+
+function formatPtyInfo (project, branch, workDir, info) {
+  const label = branch && branch !== 'main' && branch !== 'master'
+    ? `/${project}/${branch}`
+    : `/${project}`;
+  const elapsed = info.startedAt
+    ? formatDuration(Date.now() - new Date(info.startedAt).getTime())
+    : '-';
+  const liveTimer = liveConsoleTimers.has(workDir) ? '✅' : '❌';
+  const raw = runner.getBuffer(workDir);
+  const cleaned = raw ? cleanPtyOutput(raw) : '';
+  const lastLines = cleaned
+    ? cleaned.split('\n').slice(-15).join('\n')
+    : '(empty)';
+
+  return `<b>${escapeHtml(label)}</b>
+State: <code>${info.state}</code>
+Buffer: <code>${info.bufferSize}</code> bytes
+Elapsed: ${elapsed}
+Live console: ${liveTimer}
+PTY log: <code>${info.hasLogStream ? 'writing' : 'off'}</code>
+
+<pre>${escapeHtml(lastLines)}</pre>`;
+}
+
 function handleHistory () {
   const history = queue.getHistory(10);
   if (history.length === 0) {
@@ -729,6 +785,7 @@ function handleHelp () {
 /worktrees /project — project worktrees
 /worktree /project/branch — create worktree
 /rmworktree /project/branch — remove worktree
+/pty [/project[/branch]] — PTY session diagnostics
 /history — task history
 /stop — stop listener
 /help — this help

@@ -13,12 +13,13 @@ const DEFAULT_TIMEOUT = 600_000; // 10 minutes
  * receives completion signals via marker files written by the notifier hook.
  */
 export class PtyRunner extends EventEmitter {
-  constructor (logger, timeout, taskLogger) {
+  constructor (logger, timeout, taskLogger, ptyLogDir) {
     super();
     this.logger = logger;
     this.timeout = timeout || DEFAULT_TIMEOUT;
     this.taskLogger = taskLogger || null;
-    // workDir -> { pty, state, currentTask, sessionId, workDir, _pendingId, _buffer }
+    this.ptyLogDir = ptyLogDir || null;
+    // workDir -> { pty, state, currentTask, sessionId, workDir, _pendingId, _buffer, _logStream }
     this.sessions = new Map();
     this.pendingMarkers = new Map(); // pendingId -> resolve callback
     this._pty = null; // lazy-loaded node-pty module
@@ -196,6 +197,27 @@ export class PtyRunner extends EventEmitter {
     });
   }
 
+  _openPtyLog (session, task) {
+    if (session._logStream) {
+      session._logStream.end();
+      session._logStream = null;
+    }
+    if (!this.ptyLogDir) {
+      return;
+    }
+    try {
+      const project = task.project || 'unknown';
+      const branch = (task.branch || 'main').replace(/[/\\:*?"<>|]/g, '_');
+      const logFile = path.join(this.ptyLogDir, `${project}_${branch}_pty.log`);
+      session._logStream = fs.createWriteStream(logFile, { flags: 'w' });
+      session._logStream.on('error', () => {
+        session._logStream = null;
+      });
+    } catch {
+      // ignore — logging is best-effort
+    }
+  }
+
   /**
    * Send a task to an existing PTY session and wait for completion.
    */
@@ -205,6 +227,8 @@ export class PtyRunner extends EventEmitter {
     session.state = 'busy';
     session.currentTask = task;
     session._pendingId = pendingId;
+    session._buffer = '';
+    this._openPtyLog(session, task);
 
     // Set up marker wait + timeout
     const markerPromise = this._waitForMarker(pendingId, this.timeout);
@@ -304,6 +328,9 @@ export class PtyRunner extends EventEmitter {
       if (session._buffer.length > 50000) {
         session._buffer = session._buffer.slice(-25000);
       }
+      if (session._logStream) {
+        session._logStream.write(data);
+      }
     });
 
     ptyProcess.onExit(({ exitCode }) => {
@@ -382,6 +409,11 @@ export class PtyRunner extends EventEmitter {
       this.pendingMarkers.delete(session._pendingId);
     }
 
+    if (session._logStream) {
+      session._logStream.end();
+      session._logStream = null;
+    }
+
     try {
       if (session.pty) {
         session.pty.kill();
@@ -438,6 +470,42 @@ export class PtyRunner extends EventEmitter {
   getBuffer (workDir) {
     const session = this.sessions.get(workDir);
     return session?._buffer || '';
+  }
+
+  /**
+   * Get diagnostic info about a PTY session.
+   */
+  getSessionInfo (workDir) {
+    const session = this.sessions.get(workDir);
+    if (!session) {
+      return null;
+    }
+    return {
+      state: session.state,
+      bufferSize: session._buffer?.length || 0,
+      hasLogStream: !!session._logStream,
+      taskText: session.currentTask?.text || null,
+      startedAt: session.currentTask?.startedAt || null,
+      sessionId: session.sessionId || null,
+      pendingId: session._pendingId || null,
+    };
+  }
+
+  /**
+   * Get diagnostic info for all sessions.
+   */
+  getAllSessionInfo () {
+    const result = {};
+    for (const [workDir, session] of this.sessions) {
+      result[workDir] = {
+        state: session.state,
+        bufferSize: session._buffer?.length || 0,
+        hasLogStream: !!session._logStream,
+        taskText: session.currentTask?.text || null,
+        startedAt: session.currentTask?.startedAt || null,
+      };
+    }
+    return result;
   }
 
   /**

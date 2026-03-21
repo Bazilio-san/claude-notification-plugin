@@ -248,6 +248,7 @@ All commands start with `/` and execute instantly (not queued).
 | `/worktrees /project`         | List worktrees                       |
 | `/worktree /project/branch`   | Create a worktree                    |
 | `/rmworktree /project/branch` | Remove a worktree                    |
+| `/pty [/project[/branch]]`    | PTY session diagnostics (state, buffer, output) |
 | `/history`                    | Recent task history                  |
 | `/stop`                       | Stop the listener                    |
 | `/help`                       | Show help                            |
@@ -268,6 +269,7 @@ All commands start with `/` and execute instantly (not queued).
 | `taskLogDir`         | same as `logDir`      | Task Q&A log directory                                                                 |
 | `liveConsole`        | `true`                | Stream PTY output to the "Running..." Telegram message in real-time                    |
 | `liveConsoleInterval`| `5`                   | Live console update interval in seconds                                                |
+
 
 ### Projects and worktrees
 

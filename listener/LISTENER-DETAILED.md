@@ -20,6 +20,7 @@ and executes them on your machine via an interactive Claude Code PTY session. Th
 - [Projects and worktrees](#projects-and-worktrees)
 - [Task queues](#task-queues)
 - [Bot commands](#bot-commands)
+- [Live console and PTY diagnostics](#live-console-and-pty-diagnostics)
 - [Task lifecycle](#task-lifecycle)
 - [State files](#state-files)
 - [Security](#security)
@@ -722,9 +723,72 @@ Bot: 👋 Listener is shutting down...
 
 All active tasks will be terminated. Queues are saved to disk and will be restored on the next startup.
 
+### /pty — PTY diagnostics
+
+Shows real-time information about PTY sessions: state, buffer size, live console status, and the last 15 lines of cleaned output.
+
+```
+You: /pty
+Bot: 🖥 PTY Sessions:
+
+     /api
+     State: busy
+     Buffer: 12480 bytes
+     Elapsed: 2m 35s
+     Live console: ✅
+     PTY log: writing
+
+     ◐ Reading src/auth.js
+     ● Editing src/middleware.js
+       Added JWT validation...
+```
+
+```
+You: /pty /api
+Bot: (same, but for a specific project)
+```
+
 ### /help — help
 
 Shows a brief reference for all commands.
+
+---
+
+## Live console and PTY diagnostics
+
+### Live console
+
+When **`liveConsole`** is enabled (default: `true`), the "⏳ Running..." message in Telegram is periodically updated with the cleaned tail of Claude Code's PTY output, so you can see what Claude is doing in real-time.
+
+The output is cleaned from ANSI escape codes and Claude Code UI chrome (logo, status bar, prompts), leaving only meaningful content.
+
+Configuration:
+- `liveConsole` — enable/disable (default: `true`)
+- `liveConsoleInterval` — update interval in seconds (default: `5`)
+
+### PTY logs
+
+Each running task writes raw PTY output to a file: `{taskLogDir}/{project}_{branch}_pty.log`.
+The file is overwritten when a new task starts for the same project/branch.
+
+Monitor in real-time:
+```bash
+# Linux / macOS / Git Bash
+tail -f ~/.claude/myproject_main_pty.log
+
+# Windows PowerShell
+Get-Content ~/.claude/myproject_main_pty.log -Wait -Tail 50
+```
+
+### /pty command
+
+Send `/pty` or `/pty /project` in Telegram to get instant diagnostics:
+- Session state (`busy` / `idle` / `starting`)
+- Buffer size in bytes
+- Elapsed time since task start
+- Whether live console interval is active
+- Whether PTY log stream is writing
+- Last 15 lines of cleaned output
 
 ---
 
