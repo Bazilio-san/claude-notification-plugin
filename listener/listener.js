@@ -14,6 +14,28 @@ import { parseMessage, parseTarget } from './message-parser.js';
 import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME } from '../bin/constants.js';
 
 // ----------------------
+// CRASH PROTECTION
+// ----------------------
+
+process.on('uncaughtException', (err) => {
+  const msg = `[UNCAUGHT] ${err.message}`;
+  try {
+    console.error(msg, err.stack);
+  } catch {
+    // ignore
+  }
+  // Don't exit for known node-pty cleanup errors
+  if (err.message?.includes('AttachConsole failed')) {
+    return;
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
+// ----------------------
 // CONFIG
 // ----------------------
 
@@ -131,13 +153,22 @@ for (const alias of Object.keys(listenerConfig.projects)) {
 }
 
 // ----------------------
-// WATCHDOG
+// WATCHDOG + ORPHAN RECOVERY
 // ----------------------
 
+// 1. Clean up tasks that exceeded taskTimeout
 const recovered = queue.watchdog(taskTimeout);
 for (const { workDir, next } of recovered) {
   if (next) {
     startTask(workDir, next);
+  }
+}
+
+// 2. Re-start orphaned active tasks (PTY sessions lost on restart)
+for (const [workDir, entry] of Object.entries(queue.queues)) {
+  if (entry.active && !runner.isRunning(workDir)) {
+    logger.info(`Orphan recovery: re-starting task "${entry.active.id}" in ${workDir}`);
+    startTask(workDir, entry.active);
   }
 }
 

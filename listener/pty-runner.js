@@ -239,8 +239,36 @@ export class PtyRunner extends EventEmitter {
     session.pty.write(`\x1b[200~${task.text}\x1b[201~\r`);
     this.logger.info(`PTY task sent to ${workDir}: ${task.text.slice(0, 100)}`);
 
+    // Monitor PTY output for fatal errors that prevent task completion
+    const errorPatterns = [
+      { pattern: 'auto mode temporarily unavailable', msg: 'Claude auto mode temporarily unavailable' },
+      { pattern: 'Session expired', msg: 'Claude session expired' },
+      { pattern: 'Authentication required', msg: 'Claude authentication required' },
+    ];
+    const errorCheckInterval = setInterval(() => {
+      const buf = session._buffer || '';
+      for (const { pattern, msg } of errorPatterns) {
+        if (buf.includes(pattern)) {
+          clearInterval(errorCheckInterval);
+          this.logger.error(`PTY fatal: ${msg} in ${workDir}`);
+          if (session._pendingId && this.pendingMarkers.has(session._pendingId)) {
+            this.pendingMarkers.delete(session._pendingId);
+          }
+          session.state = 'idle';
+          session.currentTask = null;
+          this._destroyPty(workDir);
+          this.emit('error', workDir, task, msg);
+          return;
+        }
+      }
+    }, 3000);
+
+    // Clean up error monitor when task completes normally
+    const clearErrorCheck = () => clearInterval(errorCheckInterval);
+
     // Handle completion asynchronously
     markerPromise.then((marker) => {
+      clearErrorCheck();
       session.state = 'idle';
       session.currentTask = null;
       session.sessionId = marker.sessionId;
@@ -262,6 +290,7 @@ export class PtyRunner extends EventEmitter {
       }
       this.emit('complete', workDir, task, result);
     }).catch((err) => {
+      clearErrorCheck();
       session.state = 'idle';
       session.currentTask = null;
 
