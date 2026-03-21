@@ -209,8 +209,10 @@ export class PtyRunner extends EventEmitter {
     // Set up marker wait + timeout
     const markerPromise = this._waitForMarker(pendingId, this.timeout);
 
-    // Send the task text to the PTY
-    session.pty.write(task.text + '\r');
+    // Send the task text to the PTY using bracketed paste mode.
+    // Without this, newlines in the text are interpreted as Enter keypresses,
+    // splitting the prompt into multiple submissions and breaking the flow.
+    session.pty.write(`\x1b[200~${task.text}\x1b[201~\r`);
     this.logger.info(`PTY task sent to ${workDir}: ${task.text.slice(0, 100)}`);
 
     // Handle completion asynchronously
