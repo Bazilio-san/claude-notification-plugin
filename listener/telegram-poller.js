@@ -276,17 +276,34 @@ function splitMessage (text) {
 
 // Strip ANSI escape codes and terminal control sequences from PTY output
 function stripAnsi (text) {
-  return text
+  let result = text
+    // Cursor-right (\x1b[<N>C) → replace with N spaces (preserves word spacing)
+    .replace(/\x1b\[(\d+)C/g, (_, n) => ' '.repeat(parseInt(n, 10)))
+    // Cursor-position (\x1b[<row>;<col>H) → replace with newline (absolute move = new line)
+    .replace(/\x1b\[\d+;\d+H/g, '\n')
     // CSI sequences: \x1b[ followed by optional ?/>/! prefix, params, and terminator
     .replace(/\x1b\[[?>=!]?[0-9;]*[a-zA-Z~]/g, '')
     // OSC sequences: \x1b] ... (terminated by BEL or ST)
     .replace(/\x1b][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     // Other two-char escape sequences (\x1b followed by any single char)
     .replace(/\x1b[^[\]]/g, '')
-    // Carriage returns (overwrite lines)
-    .replace(/\r/g, '')
-    // Remaining control chars except newline and tab
+    // Remaining control chars except newline, tab, and CR
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+
+  // Normalize \r\n to \n first, then simulate standalone \r (line overwrite)
+  result = result.replace(/\r\n/g, '\n');
+  const lines = result.split('\n');
+  const resolved = [];
+  for (const line of lines) {
+    if (line.includes('\r')) {
+      // Standalone \r means overwrite — keep only the last segment
+      const parts = line.split('\r');
+      resolved.push(parts[parts.length - 1]);
+    } else {
+      resolved.push(line);
+    }
+  }
+  return resolved.join('\n');
 }
 
 // Clean PTY output for display: strip ANSI + remove Claude Code UI chrome

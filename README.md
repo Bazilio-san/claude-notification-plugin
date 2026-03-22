@@ -98,7 +98,8 @@ Config file: `~/.claude/claude-notify.config.json`
     "logDir": "abs-path-to-listener-logs",
     "taskLogDir": "abs-path-to-task-logs",
     "liveConsole": true,
-    "liveConsoleInterval": 5
+    "liveConsoleIntervalMillis": 1,
+    "liveConsoleMaxOutputChars": 300
   }
 }
 ```
@@ -271,7 +272,8 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `logDir`             | `~/.claude`           | Listener log directory                                                                 |
 | `taskLogDir`         | same as `logDir`      | Task Q&A log directory                                                                 |
 | `liveConsole`        | `true`                | Stream PTY output + tool activity to the "Running..." Telegram message in real-time    |
-| `liveConsoleInterval`| `5`                   | Live console update interval in seconds                                                |
+| `liveConsoleIntervalMillis`| `1`                   | Live console update interval in seconds                                                |
+| `liveConsoleMaxOutputChars`| `300`                | Max characters of PTY output to show in live console                                   |
 
 
 ### Projects and worktrees

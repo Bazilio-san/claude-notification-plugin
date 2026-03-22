@@ -127,8 +127,8 @@ const runner = new PtyRunner(logger, taskTimeout, taskLogger, taskLogDir);
 const worktreeManager = new WorktreeManager(config, logger);
 
 const liveConsoleEnabled = listenerConfig.liveConsole !== false; // default: true
-const liveConsoleInterval = (listenerConfig.liveConsoleInterval || 5) * 1000;
-const LIVE_CONSOLE_MAX_OUTPUT = 3000;
+const liveConsoleIntervalMillis = (listenerConfig.liveConsoleIntervalMillis || 1) * 1000;
+const liveConsoleMaxOutputChars = listenerConfig.liveConsoleMaxOutputChars || 300;
 
 const startTime = Date.now();
 
@@ -142,7 +142,7 @@ const liveConsoleTimers = new Map();
 logger.info('Listener started');
 logger.info(`Projects: ${JSON.stringify(Object.keys(listenerConfig.projects))}`);
 logger.info(`Session continuity: ${continueSessionEnabled ? 'enabled' : 'disabled'}`);
-logger.info(`Live console: ${liveConsoleEnabled ? `enabled (${liveConsoleInterval / 1000}s interval)` : 'disabled'}`);
+logger.info(`Live console: ${liveConsoleEnabled ? `enabled (${liveConsoleIntervalMillis / 1000}s interval, max ${liveConsoleMaxOutputChars} chars)` : 'disabled'}`);
 
 // ----------------------
 // DISCOVER WORKTREES ON START
@@ -339,11 +339,11 @@ function startLiveConsole (workDir, messageId, header) {
         return;
       }
       // Take the tail that fits
-      const tail = cleaned.length > LIVE_CONSOLE_MAX_OUTPUT
-        ? cleaned.slice(-LIVE_CONSOLE_MAX_OUTPUT)
+      const tail = cleaned.length > liveConsoleMaxOutputChars
+        ? cleaned.slice(-liveConsoleMaxOutputChars)
         : cleaned;
       // Trim to last complete line if we sliced mid-line
-      const output = cleaned.length > LIVE_CONSOLE_MAX_OUTPUT
+      const output = cleaned.length > liveConsoleMaxOutputChars
         ? tail.slice(tail.indexOf('\n') + 1)
         : tail;
       if (!output || output === lastSentText) {
@@ -360,7 +360,7 @@ function startLiveConsole (workDir, messageId, header) {
     } catch (err) {
       logger.warn(`Live console edit error: ${err.message}`);
     }
-  }, liveConsoleInterval);
+  }, liveConsoleIntervalMillis);
   liveConsoleTimers.set(workDir, timer);
 }
 

@@ -768,7 +768,8 @@ The output is cleaned from ANSI escape codes and Claude Code UI chrome (logo, st
 
 Configuration:
 - `liveConsole` — enable/disable (default: `true`)
-- `liveConsoleInterval` — update interval in seconds (default: `5`)
+- `liveConsoleIntervalMillis` — update interval in seconds (default: `1`)
+- `liveConsoleMaxOutputChars` — max characters of PTY output to show (default: `300`)
 
 ### PTY logs
 
