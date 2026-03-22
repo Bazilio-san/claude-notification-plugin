@@ -349,6 +349,17 @@ export class PtyRunner extends EventEmitter {
       args.push('--permission-mode', 'auto');
     }
 
+    // Reduce PTY output noise: disable animations, progress bar, tips
+    if (!args.includes('--settings')) {
+      args.push('--settings', JSON.stringify({
+        prefersReducedMotion: true,
+        outputStyle: 'plain',
+        terminalProgressBarEnabled: false,
+        spinnerTipsEnabled: false,
+        showTurnDuration: false,
+      }));
+    }
+
     this.logger.info(`Creating PTY session in ${workDir} with args: ${JSON.stringify(args)}`);
 
     const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
