@@ -6,6 +6,9 @@ const COMMANDS = [
   '/history', '/stop', '/help',
 ];
 
+// Telegram bot commands to silently ignore (not tasks, not our commands)
+const IGNORED_COMMANDS = ['/start'];
+
 /**
  * Parse a Telegram message into a command or task.
  *
@@ -31,6 +34,11 @@ export function parseMessage (text) {
   if (trimmed.startsWith('/')) {
     const parts = trimmed.split(/\s+/);
     const cmd = parts[0].toLowerCase().replace(/@\w+$/, ''); // strip @botname
+
+    // Telegram built-in commands — silently ignore
+    if (IGNORED_COMMANDS.includes(cmd)) {
+      return null;
+    }
 
     // Known command
     if (COMMANDS.includes(cmd)) {
