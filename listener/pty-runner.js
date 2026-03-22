@@ -434,14 +434,26 @@ export class PtyRunner extends EventEmitter {
 
   /**
    * Wait for PTY output to stabilize (Claude has loaded).
+   * Automatically answers the workspace trust prompt if it appears.
    */
   _waitForReady (session, timeoutMs) {
     return new Promise((resolve) => {
       let lastLength = 0;
       let stableCount = 0;
+      let trustAnswered = false;
       const checkInterval = 500;
 
       const timer = setInterval(() => {
+        // Detect and auto-answer workspace trust prompt
+        if (!trustAnswered) {
+          const buf = (session._buffer || '').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\s/g, '');
+          if (buf.includes('trustthisfolder') || buf.includes('Yesiproceed')) {
+            trustAnswered = true;
+            this.logger.info('Auto-answering workspace trust prompt');
+            session.pty.write('\r');
+          }
+        }
+
         const currentLength = session._buffer.length;
         if (currentLength > 0 && currentLength === lastLength) {
           stableCount++;
