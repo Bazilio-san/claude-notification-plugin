@@ -1,6 +1,6 @@
 ---
 name: test-telegram
-description: "E2E testing of Telegram bot and listener via Playwright MCP on Telegram Web. Use when asked to test the listener with Playwright, test in Telegram, verify bot interactions. Triggers: 'тестируй листнер с плейврайт', 'тестируй в телеграм сам', 'протестируй бота в телеграме'."
+description: "E2E testing of Telegram bot and listener via Playwright MCP on Telegram Web. Use when asked to test the listener with Playwright, test in Telegram, verify bot interactions. Triggers: 'тестируй листнер с плейврайт', 'тестируй в телеграм', 'тестируй в телеграм сам', 'протестируй бота в телеграме'."
 disable-model-invocation: true
 ---
 

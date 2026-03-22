@@ -261,28 +261,57 @@ export class PtyRunner extends EventEmitter {
     writeLines();
     this.logger.info(`PTY task sent to ${workDir}: ${task.text.slice(0, 100)}`);
 
-    // Monitor PTY output for fatal errors that prevent task completion
+    // Monitor PTY output for fatal errors that prevent task completion.
+    // Some patterns (e.g. "auto mode temporarily unavailable") can appear in the
+    // Claude CLI status bar while Claude is still actively working. To avoid false
+    // positives we require the buffer to stop growing for two consecutive checks
+    // before treating the match as a real error.
     const errorPatterns = [
       { pattern: 'auto mode temporarily unavailable', msg: 'Claude auto mode temporarily unavailable — retry later' },
       { pattern: 'Session expired', msg: 'Claude session expired' },
       { pattern: 'Authentication required', msg: 'Claude authentication required' },
     ];
+    let errorCandidate = null; // { msg, bufLen } — suspected error awaiting confirmation
+    let checkedUpTo = 0; // buffer offset already scanned — avoids re-matching the same text
     const errorCheckInterval = setInterval(() => {
       const buf = session._buffer || '';
-      for (const { pattern, msg } of errorPatterns) {
-        if (buf.includes(pattern)) {
+      const bufLen = buf.length;
+
+      // If we have a candidate from the previous cycle, confirm it
+      if (errorCandidate) {
+        if (bufLen === errorCandidate.bufLen) {
+          // Buffer did not grow — Claude stopped, treat as real error
           clearInterval(errorCheckInterval);
-          this.logger.error(`PTY fatal: ${msg} in ${workDir}`);
+          this.logger.error(`PTY fatal: ${errorCandidate.msg} in ${workDir}`);
           if (session._pendingId && this.pendingMarkers.has(session._pendingId)) {
             this.pendingMarkers.delete(session._pendingId);
           }
           session.state = 'idle';
           session.currentTask = null;
           this._destroyPty(workDir);
-          this.emit('error', workDir, task, msg);
+          this.emit('error', workDir, task, errorCandidate.msg);
+          return;
+        }
+        // Buffer grew — Claude is still working, false positive
+        this.logger.info(`PTY error candidate dismissed (buffer grew) in ${workDir}`);
+        errorCandidate = null;
+        checkedUpTo = bufLen;
+        return;
+      }
+
+      // Scan only new buffer content for pattern matches
+      if (bufLen <= checkedUpTo) {
+        return;
+      }
+      const fresh = buf.slice(checkedUpTo);
+      for (const { pattern, msg } of errorPatterns) {
+        if (fresh.includes(pattern)) {
+          this.logger.warn(`PTY error candidate detected: "${pattern}" in ${workDir}, waiting to confirm…`);
+          errorCandidate = { msg, bufLen };
           return;
         }
       }
+      checkedUpTo = bufLen;
     }, 3000);
 
     // Clean up error monitor when task completes normally
@@ -389,14 +418,43 @@ export class PtyRunner extends EventEmitter {
       _buffer: '',
     };
 
+    // Auto-answer permission prompts: track buffer position and cooldown to
+    // prevent double-fire when Claude re-renders the same prompt on screen.
+    let lastPermissionAnswerAt = 0;
+    let lastPermissionAnswerTime = 0;
+    const PERMISSION_COOLDOWN_MS = 5000;
+
     ptyProcess.onData((data) => {
       session._buffer += data;
       // Keep buffer reasonable size
       if (session._buffer.length > 50000) {
         session._buffer = session._buffer.slice(-25000);
+        lastPermissionAnswerAt = Math.max(0, lastPermissionAnswerAt - 25000);
       }
       if (session._logStream) {
         session._logStream.write(data);
+      }
+
+      // Auto-answer interactive permission prompts that appear when
+      // "auto mode temporarily unavailable". The prompt looks like:
+      //   Do you want to proceed?
+      //   ❯ 1. Yes
+      //   2. Yes, and always allow …
+      //   3. No
+      // We send Enter to approve (cursor ❯ is already on "1. Yes").
+      // Cooldown prevents double-fire from screen redraws.
+      const now = Date.now();
+      if (session.state === 'busy'
+        && session._buffer.length - lastPermissionAnswerAt > 50
+        && now - lastPermissionAnswerTime > PERMISSION_COOLDOWN_MS) {
+        const tail = session._buffer.slice(lastPermissionAnswerAt);
+        const clean = tail.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\s/g, '');
+        if (clean.includes('Doyouwanttoproceed') && clean.includes('1.Yes')) {
+          lastPermissionAnswerAt = session._buffer.length;
+          lastPermissionAnswerTime = now;
+          this.logger.info(`Auto-answering permission prompt in ${session.workDir}`);
+          session.pty.write('\r');
+        }
       }
     });
 
