@@ -158,24 +158,71 @@ function isNotifierDisabled () {
   return false;
 }
 
-function writePtySignalFile (event) {
-  const sessionId = event.session_id || 'unknown';
-  const cwd = event.cwd || process.cwd();
+function writeSignalFile (name, data) {
   try {
     fs.mkdirSync(PTY_SIGNAL_DIR, { recursive: true });
-    const signalFile = path.join(PTY_SIGNAL_DIR, `${sessionId}.json`);
-    fs.writeFileSync(signalFile, JSON.stringify({
-      sessionId,
-      cwd,
-      lastAssistantMessage: event.last_assistant_message || '',
-      cost: event.total_cost_usd || 0,
-      numTurns: event.num_turns || 0,
-      durationMs: event.duration_ms || 0,
-      timestamp: Date.now(),
-    }));
+    fs.writeFileSync(path.join(PTY_SIGNAL_DIR, name), JSON.stringify(data));
   } catch {
     // silent fail
   }
+}
+
+function writePtySignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  writeSignalFile(`${sessionId}.json`, {
+    sessionId,
+    cwd: event.cwd || process.cwd(),
+    lastAssistantMessage: event.last_assistant_message || '',
+    cost: event.total_cost_usd || 0,
+    numTurns: event.num_turns || 0,
+    durationMs: event.duration_ms || 0,
+    timestamp: Date.now(),
+  });
+}
+
+function writeErrorSignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  writeSignalFile(`err_${sessionId}.json`, {
+    type: 'error',
+    cwd: event.cwd || process.cwd(),
+    error: event.error || 'unknown',
+    errorDetails: event.error_details || '',
+    lastAssistantMessage: event.last_assistant_message || '',
+    timestamp: Date.now(),
+  });
+}
+
+function writeReadySignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  writeSignalFile(`rdy_${sessionId}.json`, {
+    type: 'ready',
+    cwd: event.cwd || process.cwd(),
+    model: event.model || '',
+    source: event.source || '',
+    timestamp: Date.now(),
+  });
+}
+
+function writeActivitySignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  writeSignalFile(`act_${sessionId}.json`, {
+    type: 'activity',
+    cwd: event.cwd || process.cwd(),
+    toolName: event.tool_name || '',
+    toolInput: event.tool_input || {},
+    timestamp: Date.now(),
+  });
+}
+
+function writeCompactSignalFile (event) {
+  const sessionId = event.session_id || 'unknown';
+  writeSignalFile(`cmp_${sessionId}.json`, {
+    type: 'compact',
+    cwd: event.cwd || process.cwd(),
+    summary: event.compact_summary || '',
+    trigger: event.trigger || '',
+    timestamp: Date.now(),
+  });
 }
 
 // ----------------------
@@ -659,10 +706,32 @@ process.stdin.on('end', async () => {
     process.exit(0);
   }
 
-  // For listener-only mode: write PTY signal file on Stop, then exit
+  // For listener-only mode: handle events via signal files, then exit
   if (disabled === 'listener-only') {
-    if (eventType === 'Stop') {
-      writePtySignalFile(event);
+    switch (eventType) {
+      case 'PermissionRequest':
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PermissionRequest',
+            decision: { behavior: 'allow' },
+          },
+        }));
+        break;
+      case 'Stop':
+        writePtySignalFile(event);
+        break;
+      case 'StopFailure':
+        writeErrorSignalFile(event);
+        break;
+      case 'SessionStart':
+        writeReadySignalFile(event);
+        break;
+      case 'PostToolUse':
+        writeActivitySignalFile(event);
+        break;
+      case 'PostCompact':
+        writeCompactSignalFile(event);
+        break;
     }
     process.exit(0);
   }
@@ -691,7 +760,7 @@ process.stdin.on('end', async () => {
   // STOP / NOTIFICATION EVENT
   // ----------------------
 
-  if (eventType !== 'Stop' && eventType !== 'Notification') {
+  if (eventType !== 'Stop' && eventType !== 'Notification' && eventType !== 'StopFailure') {
     process.exit(0);
   }
 
@@ -709,8 +778,8 @@ process.stdin.on('end', async () => {
     process.exit(0);
   }
 
-  const statusEmoji = eventType === 'Notification' ? '⏸' : '✅';
-  const desktopStatus = eventType === 'Notification' ? 'Waiting' : 'Finished';
+  const statusEmoji = eventType === 'Notification' ? '⏸' : eventType === 'StopFailure' ? '❌' : '✅';
+  const desktopStatus = eventType === 'Notification' ? 'Waiting' : eventType === 'StopFailure' ? `Error: ${event.error || 'unknown'}` : 'Finished';
 
   const branch = getBranch(cwd);
   let label = `/${project}`;

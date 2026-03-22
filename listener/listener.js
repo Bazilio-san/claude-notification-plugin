@@ -178,6 +178,7 @@ for (const [workDir, entry] of Object.entries(queue.queues)) {
 
 runner.on('complete', async (workDir, task, result) => {
   stopLiveConsole(workDir);
+  runner.cleanActivitySignal(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
 
@@ -249,6 +250,7 @@ runner.on('complete', async (workDir, task, result) => {
 
 runner.on('error', async (workDir, task, errorMsg) => {
   stopLiveConsole(workDir);
+  runner.cleanActivitySignal(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
 
@@ -268,6 +270,7 @@ runner.on('error', async (workDir, task, errorMsg) => {
 
 runner.on('timeout', async (workDir, task) => {
   stopLiveConsole(workDir);
+  runner.cleanActivitySignal(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry);
   const timeoutMin = Math.round(taskTimeout / 60000);
@@ -348,7 +351,11 @@ function startLiveConsole (workDir, messageId, header) {
       }
       lastSentText = output;
       const elapsed = formatDuration(Date.now() - new Date(runner.getActive(workDir)?.startedAt || Date.now()).getTime());
-      const text = `${header}\n<i>${elapsed}</i>\n\n<pre>${escapeHtml(output)}</pre>`;
+      const activity = runner.getActivity(workDir);
+      const activityLine = activity && (Date.now() - activity.timestamp < 30000)
+        ? `\n<b>${escapeHtml(formatActivity(activity))}</b>`
+        : '';
+      const text = `${header}\n<i>${elapsed}</i>${activityLine}\n\n<pre>${escapeHtml(output)}</pre>`;
       await poller.editMessage(messageId, text);
     } catch (err) {
       logger.warn(`Live console edit error: ${err.message}`);
@@ -404,6 +411,37 @@ async function startTask (workDir, task) {
     logger.error(`Failed to start task: ${err.message}`);
     poller.sendMessage(`❌  <code>${label}</code>\nFailed to start: ${escapeHtml(err.message)}`);
     queue.onTaskComplete(workDir, `START_ERROR: ${err.message}`);
+  }
+}
+
+function formatActivity (activity) {
+  if (!activity) {
+    return '';
+  }
+  const { toolName, toolInput } = activity;
+  switch (toolName) {
+    case 'Edit':
+    case 'Write':
+    case 'Read':
+      return toolInput?.file_path ? `${toolName}: ${path.basename(toolInput.file_path)}` : toolName;
+    case 'Bash':
+      return toolInput?.command ? `$ ${toolInput.command.slice(0, 80)}` : 'Bash';
+    case 'Grep':
+      return toolInput?.pattern ? `Grep: ${toolInput.pattern}` : 'Grep';
+    case 'Glob':
+      return toolInput?.pattern ? `Glob: ${toolInput.pattern}` : 'Glob';
+    case 'Agent':
+      return toolInput?.description ? `Agent: ${toolInput.description}` : 'Agent';
+    case 'WebFetch':
+      return toolInput?.url ? `Fetch: ${toolInput.url.slice(0, 60)}` : 'WebFetch';
+    case 'WebSearch':
+      return toolInput?.query ? `Search: ${toolInput.query}` : 'WebSearch';
+    default:
+      if (toolName?.startsWith('mcp__')) {
+        const parts = toolName.split('__');
+        return parts.length >= 3 ? `MCP ${parts[1]}: ${parts[2]}` : toolName;
+      }
+      return toolName || '';
   }
 }
 

@@ -68,12 +68,9 @@ export class PtyRunner extends EventEmitter {
 
   /**
    * Check for new marker files in the signal directory.
+   * Handles typed signals: stop (default), error, ready, activity, compact.
    */
   _checkMarkerFiles () {
-    if (this.pendingMarkers.size === 0) {
-      return;
-    }
-
     let files;
     try {
       files = fs.readdirSync(PTY_SIGNAL_DIR);
@@ -94,23 +91,93 @@ export class PtyRunner extends EventEmitter {
         continue;
       }
 
-      // Try to match by cwd (primary matching for PTY runner)
       const cwd = marker.cwd;
-      if (cwd) {
+      if (!cwd) {
+        continue;
+      }
+
+      const type = marker.type || 'stop';
+
+      if (type === 'stop') {
+        // Completion signal — resolve pending marker
+        if (this.pendingMarkers.size === 0) {
+          continue;
+        }
         for (const [pid, resolve] of this.pendingMarkers) {
           const session = this._findSessionByPendingId(pid);
           if (session && this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
             this.pendingMarkers.delete(pid);
-            try {
-              fs.unlinkSync(filePath);
-            } catch {
-              // ignore
-            }
+            this._unlinkSafe(filePath);
             resolve(marker);
             break;
           }
         }
+      } else if (type === 'error') {
+        // StopFailure — emit error, abort task
+        this._unlinkSafe(filePath);
+        for (const [workDir, session] of this.sessions) {
+          if (session.state === 'busy' && this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            if (session._pendingId && this.pendingMarkers.has(session._pendingId)) {
+              this.pendingMarkers.delete(session._pendingId);
+            }
+            const task = session.currentTask;
+            session.state = 'idle';
+            session.currentTask = null;
+            this._destroyPty(workDir);
+            const errorMsg = `API error: ${marker.error}${marker.errorDetails ? ' — ' + marker.errorDetails : ''}`;
+            this.logger.error(`Hook signal: ${errorMsg} in ${workDir}`);
+            if (this.taskLogger) {
+              this.taskLogger.logAnswer(task?.project || 'unknown', task?.branch || 'main', errorMsg, 1);
+            }
+            this.emit('error', workDir, task, errorMsg);
+            break;
+          }
+        }
+      } else if (type === 'ready') {
+        // SessionStart — emit ready event
+        this._unlinkSafe(filePath);
+        for (const [workDir, session] of this.sessions) {
+          if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._model = marker.model || '';
+            this.emit('ready', workDir, marker);
+            break;
+          }
+        }
+      } else if (type === 'activity') {
+        // PostToolUse — update activity data (don't delete, gets overwritten)
+        for (const [, session] of this.sessions) {
+          if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastActivity = {
+              toolName: marker.toolName,
+              toolInput: marker.toolInput,
+              timestamp: marker.timestamp,
+            };
+            break;
+          }
+        }
+      } else if (type === 'compact') {
+        // PostCompact — update compaction info
+        this._unlinkSafe(filePath);
+        for (const [workDir, session] of this.sessions) {
+          if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastCompact = {
+              summary: marker.summary,
+              trigger: marker.trigger,
+              timestamp: marker.timestamp,
+            };
+            this.emit('compact', workDir, marker);
+            break;
+          }
+        }
       }
+    }
+  }
+
+  _unlinkSafe (filePath) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // ignore
     }
   }
 
@@ -261,65 +328,11 @@ export class PtyRunner extends EventEmitter {
     writeLines();
     this.logger.info(`PTY task sent to ${workDir}: ${task.text.slice(0, 100)}`);
 
-    // Monitor PTY output for fatal errors that prevent task completion.
-    // Some patterns (e.g. "auto mode temporarily unavailable") can appear in the
-    // Claude CLI status bar while Claude is still actively working. To avoid false
-    // positives we require the buffer to stop growing for two consecutive checks
-    // before treating the match as a real error.
-    const errorPatterns = [
-      { pattern: 'auto mode temporarily unavailable', msg: 'Claude auto mode temporarily unavailable — retry later' },
-      { pattern: 'Session expired', msg: 'Claude session expired' },
-      { pattern: 'Authentication required', msg: 'Claude authentication required' },
-    ];
-    let errorCandidate = null; // { msg, bufLen } — suspected error awaiting confirmation
-    let checkedUpTo = 0; // buffer offset already scanned — avoids re-matching the same text
-    const errorCheckInterval = setInterval(() => {
-      const buf = session._buffer || '';
-      const bufLen = buf.length;
-
-      // If we have a candidate from the previous cycle, confirm it
-      if (errorCandidate) {
-        if (bufLen === errorCandidate.bufLen) {
-          // Buffer did not grow — Claude stopped, treat as real error
-          clearInterval(errorCheckInterval);
-          this.logger.error(`PTY fatal: ${errorCandidate.msg} in ${workDir}`);
-          if (session._pendingId && this.pendingMarkers.has(session._pendingId)) {
-            this.pendingMarkers.delete(session._pendingId);
-          }
-          session.state = 'idle';
-          session.currentTask = null;
-          this._destroyPty(workDir);
-          this.emit('error', workDir, task, errorCandidate.msg);
-          return;
-        }
-        // Buffer grew — Claude is still working, false positive
-        this.logger.info(`PTY error candidate dismissed (buffer grew) in ${workDir}`);
-        errorCandidate = null;
-        checkedUpTo = bufLen;
-        return;
-      }
-
-      // Scan only new buffer content for pattern matches
-      if (bufLen <= checkedUpTo) {
-        return;
-      }
-      const fresh = buf.slice(checkedUpTo);
-      for (const { pattern, msg } of errorPatterns) {
-        if (fresh.includes(pattern)) {
-          this.logger.warn(`PTY error candidate detected: "${pattern}" in ${workDir}, waiting to confirm…`);
-          errorCandidate = { msg, bufLen };
-          return;
-        }
-      }
-      checkedUpTo = bufLen;
-    }, 3000);
-
-    // Clean up error monitor when task completes normally
-    const clearErrorCheck = () => clearInterval(errorCheckInterval);
+    // Error detection is now handled by the StopFailure hook signal,
+    // which writes an error signal file processed by _checkMarkerFiles.
 
     // Handle completion asynchronously
     markerPromise.then((marker) => {
-      clearErrorCheck();
       session.state = 'idle';
       session.currentTask = null;
       session.sessionId = marker.sessionId;
@@ -341,7 +354,6 @@ export class PtyRunner extends EventEmitter {
       }
       this.emit('complete', workDir, task, result);
     }).catch((err) => {
-      clearErrorCheck();
       session.state = 'idle';
       session.currentTask = null;
 
@@ -381,8 +393,8 @@ export class PtyRunner extends EventEmitter {
     // Reduce PTY output noise: disable animations, progress bar, tips
     if (!args.includes('--settings')) {
       args.push('--settings', JSON.stringify({
-        prefersReducedMotion: true,
-        outputStyle: 'plain',
+        // prefersReducedMotion: true,
+        // outputStyle: 'plain',
         terminalProgressBarEnabled: false,
         spinnerTipsEnabled: false,
         showTurnDuration: false,
@@ -418,43 +430,17 @@ export class PtyRunner extends EventEmitter {
       _buffer: '',
     };
 
-    // Auto-answer permission prompts: track buffer position and cooldown to
-    // prevent double-fire when Claude re-renders the same prompt on screen.
-    let lastPermissionAnswerAt = 0;
-    let lastPermissionAnswerTime = 0;
-    const PERMISSION_COOLDOWN_MS = 5000;
+    // Permission auto-approval is now handled by the PermissionRequest hook
+    // (returns auto-approve JSON when CLAUDE_NOTIFY_FROM_LISTENER=1).
 
     ptyProcess.onData((data) => {
       session._buffer += data;
       // Keep buffer reasonable size
       if (session._buffer.length > 50000) {
         session._buffer = session._buffer.slice(-25000);
-        lastPermissionAnswerAt = Math.max(0, lastPermissionAnswerAt - 25000);
       }
       if (session._logStream) {
         session._logStream.write(data);
-      }
-
-      // Auto-answer interactive permission prompts that appear when
-      // "auto mode temporarily unavailable". The prompt looks like:
-      //   Do you want to proceed?
-      //   ❯ 1. Yes
-      //   2. Yes, and always allow …
-      //   3. No
-      // We send Enter to approve (cursor ❯ is already on "1. Yes").
-      // Cooldown prevents double-fire from screen redraws.
-      const now = Date.now();
-      if (session.state === 'busy'
-        && session._buffer.length - lastPermissionAnswerAt > 50
-        && now - lastPermissionAnswerTime > PERMISSION_COOLDOWN_MS) {
-        const tail = session._buffer.slice(lastPermissionAnswerAt);
-        const clean = tail.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\s/g, '');
-        if (clean.includes('Doyouwanttoproceed') && clean.includes('1.Yes')) {
-          lastPermissionAnswerAt = session._buffer.length;
-          lastPermissionAnswerTime = now;
-          this.logger.info(`Auto-answering permission prompt in ${session.workDir}`);
-          session.pty.write('\r');
-        }
       }
     });
 
@@ -607,6 +593,44 @@ export class PtyRunner extends EventEmitter {
   getBuffer (workDir) {
     const session = this.sessions.get(workDir);
     return session?._buffer || '';
+  }
+
+  /**
+   * Get last tool activity for a workDir (from PostToolUse hook signals).
+   */
+  getActivity (workDir) {
+    const session = this.sessions.get(workDir);
+    return session?._lastActivity || null;
+  }
+
+  /**
+   * Clean up activity signal file for a workDir.
+   */
+  cleanActivitySignal (workDir) {
+    const session = this.sessions.get(workDir);
+    if (session) {
+      session._lastActivity = null;
+    }
+    // Also try to delete any activity files matching this workDir
+    try {
+      const files = fs.readdirSync(PTY_SIGNAL_DIR);
+      for (const f of files) {
+        if (!f.startsWith('act_') || !f.endsWith('.json')) {
+          continue;
+        }
+        const filePath = path.join(PTY_SIGNAL_DIR, f);
+        try {
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          if (data.cwd && this._normalizePath(data.cwd) === this._normalizePath(workDir)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 
   /**

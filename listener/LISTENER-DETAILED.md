@@ -851,6 +851,24 @@ Claude sees the project files, CLAUDE.md, .claude/settings.json, and everything 
 
 Task results are received via Claude's `Stop` hook, which writes a signal file containing `last_assistant_message` — the clean final response (not the raw PTY output with spinners and tool calls).
 
+### Hook-based communication
+
+In listener mode (`CLAUDE_NOTIFY_FROM_LISTENER=1`), the plugin communicates with the PTY runner via signal files in `~/.claude/pty-signals/` instead of parsing PTY output. This provides structured, reliable data: error types, tool activity, compaction status, and permission auto-approval without fragile buffer pattern matching.
+
+Signal files by hook event:
+
+| Signal file | Hook event | Contents |
+|---|---|---|
+| `{sessionId}.json` | `Stop` | Completion: `lastAssistantMessage`, `cost`, `numTurns`, `durationMs` |
+| `err_{sessionId}.json` | `StopFailure` | API error: `error` type (`rate_limit`, `authentication_failed`, etc.), `errorDetails` |
+| `rdy_{sessionId}.json` | `SessionStart` | Session ready: `model`, `source` (`startup`/`resume`) |
+| `act_{sessionId}.json` | `PostToolUse` | Tool activity: `toolName`, `toolInput` (overwritten per tool call) |
+| `cmp_{sessionId}.json` | `PostCompact` | Context compaction: `summary`, `trigger` (`auto`/`manual`) |
+
+The `PermissionRequest` hook auto-approves permissions by returning JSON to stdout (no signal file needed).
+
+The PTY runner polls `~/.claude/pty-signals/` every 500ms and processes each signal by matching the `cwd` field to a known working directory.
+
 ### Session continuity
 
 When `continueSession` is enabled (default), the listener reuses the same PTY session for subsequent tasks in the same workDir. The Claude process stays alive between tasks, preserving full context — exactly like working in an interactive terminal.

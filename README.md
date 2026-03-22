@@ -14,7 +14,7 @@ Sends alerts to Telegram and desktop (Windows, macOS, Linux) when Claude finishe
 - Desktop notifications (Windows toast, macOS Notification Center, Linux notify-send)
 - Sound alert
 - Voice announcement
-- Separate notifications for task completion and waiting-for-input events
+- Separate notifications for task completion, API errors, and waiting-for-input events
 - Skips short tasks (< 15s by default)
 - Per-channel enable/disable (globally and per-project)
 
@@ -270,7 +270,7 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `maxTotalTasks`      | `50`                  | Max tasks across all queues                                                            |
 | `logDir`             | `~/.claude`           | Listener log directory                                                                 |
 | `taskLogDir`         | same as `logDir`      | Task Q&A log directory                                                                 |
-| `liveConsole`        | `true`                | Stream PTY output to the "Running..." Telegram message in real-time                    |
+| `liveConsole`        | `true`                | Stream PTY output + tool activity to the "Running..." Telegram message in real-time    |
 | `liveConsoleInterval`| `5`                   | Live console update interval in seconds                                                |
 
 
