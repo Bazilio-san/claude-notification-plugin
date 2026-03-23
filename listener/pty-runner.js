@@ -106,6 +106,7 @@ export class PtyRunner extends EventEmitter {
         for (const [pid, resolve] of this.pendingMarkers) {
           const session = this._findSessionByPendingId(pid);
           if (session && this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastActivityTime = Date.now();
             this.pendingMarkers.delete(pid);
             this._unlinkSafe(filePath);
             resolve(marker);
@@ -138,6 +139,7 @@ export class PtyRunner extends EventEmitter {
         this._unlinkSafe(filePath);
         for (const [workDir, session] of this.sessions) {
           if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastActivityTime = Date.now();
             session._model = marker.model || '';
             this.emit('ready', workDir, marker);
             break;
@@ -147,6 +149,7 @@ export class PtyRunner extends EventEmitter {
         // PostToolUse — update activity data (don't delete, gets overwritten)
         for (const [, session] of this.sessions) {
           if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastActivityTime = Date.now();
             session._lastActivity = {
               toolName: marker.toolName,
               toolInput: marker.toolInput,
@@ -160,6 +163,7 @@ export class PtyRunner extends EventEmitter {
         this._unlinkSafe(filePath);
         for (const [workDir, session] of this.sessions) {
           if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
+            session._lastActivityTime = Date.now();
             session._lastCompact = {
               summary: marker.summary,
               trigger: marker.trigger,
@@ -197,15 +201,28 @@ export class PtyRunner extends EventEmitter {
   /**
    * Wait for a marker file for the given pending ID.
    */
-  _waitForMarker (pendingId, timeoutMs) {
+  /**
+   * Wait for a marker file with inactivity-based timeout.
+   * Timer resets on any PTY output or hook signal activity.
+   */
+  _waitForMarker (pendingId, inactivityMs, session) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingMarkers.delete(pendingId);
-        reject(new Error('Marker timeout'));
-      }, timeoutMs);
+      if (session) {
+        session._lastActivityTime = Date.now();
+      }
+
+      const CHECK_INTERVAL = 5000;
+      const checker = setInterval(() => {
+        const lastActivity = session?._lastActivityTime || 0;
+        if (lastActivity > 0 && Date.now() - lastActivity > inactivityMs) {
+          clearInterval(checker);
+          this.pendingMarkers.delete(pendingId);
+          reject(new Error('Marker timeout'));
+        }
+      }, CHECK_INTERVAL);
 
       this.pendingMarkers.set(pendingId, (marker) => {
-        clearTimeout(timer);
+        clearInterval(checker);
         resolve(marker);
       });
     });
@@ -297,8 +314,8 @@ export class PtyRunner extends EventEmitter {
     session._buffer = '';
     this._openPtyLog(session, task);
 
-    // Set up marker wait + timeout
-    const markerPromise = this._waitForMarker(pendingId, this.timeout);
+    // Set up marker wait + inactivity timeout
+    const markerPromise = this._waitForMarker(pendingId, this.timeout, session);
 
     // Send the task text to the PTY.
     // Bracketed paste mode (\x1b[200~...\x1b[201~) causes Claude to hang in ConPTY,
@@ -435,6 +452,7 @@ export class PtyRunner extends EventEmitter {
 
     ptyProcess.onData((data) => {
       session._buffer += data;
+      session._lastActivityTime = Date.now();
       // Keep buffer reasonable size
       if (session._buffer.length > 50000) {
         session._buffer = session._buffer.slice(-25000);

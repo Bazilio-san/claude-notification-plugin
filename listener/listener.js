@@ -277,7 +277,7 @@ runner.on('timeout', async (workDir, task) => {
 
   await poller.deleteMessage(task.runningMessageId);
 
-  const headerShort = `⏰ <code>${label}</code>\nTask forcefully stopped — timeout exceeded (${timeoutMin} min)`;
+  const headerShort = `⏰ <code>${label}</code>\nTask forcefully stopped — no activity for ${timeoutMin} min`;
   const headerFull = `${headerShort}: ${escapeHtml(task.text)}`;
   const sentId = await poller.sendMessage(headerShort, task.telegramMessageId);
   if (!sentId && task.telegramMessageId) {
