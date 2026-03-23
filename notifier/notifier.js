@@ -624,28 +624,28 @@ function numberToWords (n, lang) {
 }
 
 const voicePhrases = {
-  en: (d) => `Claude finished coding in ${numberToWords(d, 'en')} ${pluralize(d, ['second', 'seconds'])}`,
-  ru: (d) => `Клод завершил работу за ${numberToWords(d, 'ru')} ${pluralize(d, ['секунду', 'секунды', 'секунд'])}`,
-  de: (d) => `Claude hat die Arbeit in ${d} ${pluralize(d, ['Sekunde', 'Sekunden'])} abgeschlossen`,
-  fr: (d) => `Claude a termine en ${d} ${pluralize(d, ['seconde', 'secondes'])}`,
-  es: (d) => `Claude termino en ${d} ${pluralize(d, ['segundo', 'segundos'])}`,
-  pt: (d) => `Claude terminou em ${d} ${pluralize(d, ['segundo', 'segundos'])}`,
-  ja: (d) => `Claudeは${d}秒でコーディングを完了しました`,
-  ko: (d) => `Claude가 ${d}초 만에 코딩을 완료했습니다`,
+  en: (d, p) => `Claude finished working on ${p} in ${numberToWords(d, 'en')} ${pluralize(d, ['second', 'seconds'])}`,
+  ru: (d, p) => `Клод завершил работу над проектом ${p} за ${numberToWords(d, 'ru')} ${pluralize(d, ['секунду', 'секунды', 'секунд'])}`,
+  de: (d, p) => `Claude hat die Arbeit an ${p} in ${d} ${pluralize(d, ['Sekunde', 'Sekunden'])} abgeschlossen`,
+  fr: (d, p) => `Claude a termine ${p} en ${d} ${pluralize(d, ['seconde', 'secondes'])}`,
+  es: (d, p) => `Claude termino ${p} en ${d} ${pluralize(d, ['segundo', 'segundos'])}`,
+  pt: (d, p) => `Claude terminou ${p} em ${d} ${pluralize(d, ['segundo', 'segundos'])}`,
+  ja: (d, p) => `Claudeは${p}の作業を${d}秒で完了しました`,
+  ko: (d, p) => `Claude가 ${p} 작업을 ${d}초 만에 완료했습니다`,
 };
 
-function getVoicePhrase (duration) {
+function getVoicePhrase (duration, project) {
   const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
   const lang = locale.split('-')[0].toLowerCase();
   const fn = voicePhrases[lang] || voicePhrases.en;
-  return fn(duration);
+  return fn(duration, project || 'unknown');
 }
 
-function speakResult (config, duration) {
+function speakResult (config, duration, project) {
   if (!config.voice.enabled) {
     return;
   }
-  const text = getVoicePhrase(duration);
+  const text = getVoicePhrase(duration, project);
   try {
     switch (PLATFORM) {
       case 'win32': {
@@ -808,7 +808,7 @@ process.stdin.on('end', async () => {
 
   if (config.debug) {
     const debugBlockHtml = '\n\n<b>Debug:</b>\n'
-      + (config.voice.enabled ? `\nVoice: ${escapeHtml(getVoicePhrase(duration))}` : '')
+      + (config.voice.enabled ? `\nVoice: ${escapeHtml(getVoicePhrase(duration, project))}` : '')
       + `\n\nHook input:\n<pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre>`;
     telegramMessage += debugBlockHtml;
   }
@@ -819,7 +819,7 @@ process.stdin.on('end', async () => {
     branch: branch || undefined,
     duration,
     trigger: eventType,
-    voicePhrase: config.voice.enabled ? getVoicePhrase(duration) : null,
+    voicePhrase: config.voice.enabled ? getVoicePhrase(duration, project) : null,
     hookEvent: event,
   });
 
@@ -833,5 +833,5 @@ process.stdin.on('end', async () => {
 
   await sendDesktopNotification(config, desktopTitle, desktopMessage);
   playSound(config);
-  speakResult(config, duration);
+  speakResult(config, duration, project);
 });
