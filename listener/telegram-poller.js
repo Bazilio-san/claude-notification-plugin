@@ -219,6 +219,18 @@ export class TelegramPoller {
     }
   }
 
+  async setMyCommands (commands) {
+    try {
+      await fetch(`${this.baseUrl}/setMyCommands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commands }),
+      });
+    } catch (err) {
+      this.logger.error(`setMyCommands error: ${err.message}`);
+    }
+  }
+
   async sendDocument (buffer, filename, caption) {
     try {
       const formData = new FormData();

@@ -1044,5 +1044,14 @@ async function mainLoop () {
 
 (async () => {
   await poller.flush();
+  await poller.setMyCommands([
+    { command: 'status', description: 'Status of all projects' },
+    { command: 'queue', description: 'Show all queues' },
+    { command: 'projects', description: 'List projects' },
+    { command: 'history', description: 'Recent task history' },
+    { command: 'pty', description: 'PTY session diagnostics' },
+    { command: 'help', description: 'Show all commands' },
+    { command: 'stop', description: 'Stop listener' },
+  ]);
   await mainLoop();
 })();
