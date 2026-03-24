@@ -180,7 +180,7 @@ function stopDaemon () {
   console.log('Listener stopped');
 }
 
-function showStatus () {
+async function showStatus () {
   const pid = readPid();
   if (!pid) {
     console.log('Status: not running');
@@ -193,11 +193,72 @@ function showStatus () {
     return;
   }
 
-  const logFile = getLogFile();
-  console.log(`Status: running (PID: ${pid})
-Log: ${logFile}`);
+  console.log(`Status: running (PID: ${pid})`);
 
-  // Show last few log lines
+  // Read config for Telegram info and listener section
+  let config = {};
+  try {
+    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  } catch {
+    // ignore
+  }
+
+  const token = process.env.CLAUDE_NOTIFY_TELEGRAM_TOKEN || config.telegramToken || config.telegram?.token;
+  const chatId = process.env.CLAUDE_NOTIFY_TELEGRAM_CHAT_ID || config.telegramChatId || config.telegram?.chatId;
+
+  // Telegram info
+  console.log('\nTelegram:');
+  if (token) {
+    const masked = token.length > 10
+      ? token.slice(0, 5) + '...' + token.slice(-4)
+      : '***';
+    console.log(`  Token: ${masked}`);
+
+    // Fetch bot name
+    try {
+      const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const meData = await meRes.json();
+      if (meData.ok) {
+        console.log(`  Bot: @${meData.result.username} (${meData.result.first_name})`);
+      }
+    } catch {
+      // ignore fetch errors
+    }
+  } else {
+    console.log('  Token: not configured');
+  }
+
+  if (chatId) {
+    console.log(`  Chat ID: ${chatId}`);
+
+    // Fetch chat name
+    if (token) {
+      try {
+        const chatRes = await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`);
+        const chatData = await chatRes.json();
+        if (chatData.ok) {
+          const c = chatData.result;
+          const name = c.title || c.first_name || c.username || '';
+          const type = c.type || '';
+          console.log(`  Chat: ${name}${type ? ` (${type})` : ''}`);
+        }
+      } catch {
+        // ignore fetch errors
+      }
+    }
+  } else {
+    console.log('  Chat ID: not configured');
+  }
+
+  // Listener config
+  if (config.listener) {
+    console.log(`\nListener config:\n${JSON.stringify({ listener: config.listener }, null, 2)}`);
+  }
+
+  // Log file and recent lines
+  const logFile = getLogFile();
+  console.log(`\nLog: ${logFile}`);
+
   try {
     if (fs.existsSync(logFile)) {
       const content = fs.readFileSync(logFile, 'utf-8');
