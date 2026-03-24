@@ -423,6 +423,29 @@ public class ShortcutHelper {
 // Helpers
 // ──────────────────────────────────────
 
+/**
+ * Deep merge: existing values always win. Defaults only fill in missing keys.
+ * Arrays are NOT merged — existing array replaces default entirely.
+ */
+function deepMergeDefaults (defaults, existing) {
+  if (!existing || typeof existing !== 'object') {
+    return { ...defaults };
+  }
+  const result = { ...existing };
+  for (const key of Object.keys(defaults)) {
+    if (!(key in result)) {
+      result[key] = defaults[key];
+    } else if (
+      defaults[key] && typeof defaults[key] === 'object' && !Array.isArray(defaults[key])
+      && result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])
+    ) {
+      result[key] = deepMergeDefaults(defaults[key], result[key]);
+    }
+    // else: existing scalar/array wins, do nothing
+  }
+  return result;
+}
+
 function openTtyInput () {
   // If stdin is already a TTY (e.g. local `npm install`), use it directly
   if (process.stdin.isTTY) {
@@ -633,12 +656,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     },
   };
 
-  const config = { ...defaults, ...existing };
-  for (const key of Object.keys(defaults)) {
-    if (defaults[key] && typeof defaults[key] === 'object' && !Array.isArray(defaults[key])) {
-      config[key] = { ...defaults[key], ...(existing[key] || {}) };
-    }
-  }
+  const config = deepMergeDefaults(defaults, existing);
 
   // Ensure listener.claudeArgs has --model (default: opus)
   const ca = config.listener.claudeArgs || [];

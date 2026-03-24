@@ -88,6 +88,18 @@ When the user says "опубликуй", "опубликуй проект", or "
 
 E2E testing of Telegram bot interactions — use skill `/test-telegram`.
 
+## Dev/Test Cycle (listener changes)
+
+When making changes to listener or notification code:
+
+1. Make code changes
+2. Publish: `node scripts/publish.js`
+3. Wait ~60s for npm registry propagation
+4. Install: `npm install -g claude-notification-plugin@<version>`
+5. Start listener: `claude-notify listener start` (or `restart`)
+6. Test via Telegram using Playwright (`https://web.telegram.org/k/#@<bot_username>`)
+7. If broken — fix and repeat from step 1
+
 ## Maintenance Rules
 
 - After any user-facing code changes (new features, config options, env vars, CLI behavior), update `README.md` to reflect them
