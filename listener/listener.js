@@ -127,7 +127,7 @@ const runner = new PtyRunner(logger, taskTimeout, taskLogger, taskLogDir);
 const worktreeManager = new WorktreeManager(config, logger);
 
 const liveConsoleEnabled = listenerConfig.liveConsole !== false; // default: true
-const liveConsoleIntervalMillis = (listenerConfig.liveConsoleIntervalMillis || 1) * 1000;
+const liveConsoleIntervalMillis = listenerConfig.liveConsoleIntervalMillis || 1000;
 const liveConsoleMaxOutputChars = listenerConfig.liveConsoleMaxOutputChars || 300;
 
 const startTime = Date.now();
@@ -142,7 +142,7 @@ const liveConsoleTimers = new Map();
 logger.info('Listener started');
 logger.info(`Projects: ${JSON.stringify(Object.keys(listenerConfig.projects))}`);
 logger.info(`Session continuity: ${continueSessionEnabled ? 'enabled' : 'disabled'}`);
-logger.info(`Live console: ${liveConsoleEnabled ? `enabled (${liveConsoleIntervalMillis / 1000}s interval, max ${liveConsoleMaxOutputChars} chars)` : 'disabled'}`);
+logger.info(`Live console: ${liveConsoleEnabled ? `enabled (${liveConsoleIntervalMillis}ms interval, max ${liveConsoleMaxOutputChars} chars)` : 'disabled'}`);
 
 // ----------------------
 // DISCOVER WORKTREES ON START
