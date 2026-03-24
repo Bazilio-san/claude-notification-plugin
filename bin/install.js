@@ -497,7 +497,8 @@ async function main () {
   const version = getVersion();
 
   console.log('');
-  console.log(`Registering plugin v${version} in Claude Code...`);
+  console.log(`claude-notify v${version}`);
+  console.log('Registering plugin in Claude Code...');
 
   const installPath = copyToCache(version);
   console.log(`  Cached: ${installPath}`);

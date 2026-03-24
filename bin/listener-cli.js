@@ -11,6 +11,16 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const PACKAGE_ROOT = path.resolve(__dirname, '..');
+
+function getVersion () {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf-8'));
+    return pkg.version;
+  } catch {
+    return 'unknown';
+  }
+}
 
 function getLogFile () {
   try {
@@ -181,6 +191,8 @@ function stopDaemon () {
 }
 
 async function showStatus () {
+  console.log(`claude-notify v${getVersion()}`);
+
   const pid = readPid();
   if (!pid) {
     console.log('Status: not running');
