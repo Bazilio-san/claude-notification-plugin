@@ -68,7 +68,7 @@ Commands:
     process.exit(command ? 1 : 0);
 }
 
-function startDaemon () {
+async function startDaemon () {
   // Check if already running
   const existingPid = readPid();
   if (existingPid && isProcessAlive(existingPid)) {
@@ -145,9 +145,12 @@ function startDaemon () {
   fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
   fs.writeFileSync(PID_PATH, String(child.pid));
 
-  console.log(`Listener started (PID: ${child.pid})
+  // Show full status then green start confirmation
+  await showStatus();
+  console.log(`\x1b[32m
+Listener started (PID: ${child.pid})
 Log: ${logFile}
-Projects: ${Object.keys(config.listener.projects).join(', ')}`);
+Projects: ${Object.keys(config.listener.projects).join(', ')}\x1b[0m`);
 }
 
 function stopDaemon () {
@@ -221,10 +224,7 @@ async function showStatus () {
   // Telegram info
   console.log('\nTelegram:');
   if (token) {
-    const masked = token.length > 10
-      ? token.slice(0, 5) + '...' + token.slice(-4)
-      : '***';
-    console.log(`  Token: ${masked}`);
+    console.log(`  Token: ${token}`);
 
     // Fetch bot name
     try {

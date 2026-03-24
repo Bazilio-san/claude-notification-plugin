@@ -546,8 +546,7 @@ Claude Notification Plugin - Setup
 `);
 
     if (existingToken) {
-      const masked = existingToken.slice(0, 10) + '...' + existingToken.slice(-10);
-      console.log(`Telegram token found: ${masked}`);
+      console.log(`Telegram token found: ${existingToken}`);
       const reuse = await ask(rl, 'Keep existing token? (Y/n): ');
       if (reuse.toLowerCase() === 'n') {
         token = await ask(rl, 'New Bot Token: ');
