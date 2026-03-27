@@ -210,6 +210,7 @@ export class JsonlReader {
 function formatToolUse (tool) {
   const name = tool.name || '';
   const input = tool.input || {};
+  const trunc = (s, n) => (typeof s === 'string' && s.length > n ? s.slice(0, n - 1) + '…' : s);
   switch (name) {
     case 'Read':
     case 'Write':
@@ -219,7 +220,7 @@ function formatToolUse (tool) {
         : `🔧 ${name}`;
     case 'Bash':
       return input.command
-        ? `🔧 $ ${input.command.slice(0, 80)}`
+        ? `🔧 $ ${trunc(input.command, 80)}`
         : '🔧 Bash';
     case 'Grep':
       return input.pattern ? `🔧 Grep: ${input.pattern}` : '🔧 Grep';
@@ -233,6 +234,23 @@ function formatToolUse (tool) {
       return input.url ? `🔧 Fetch: ${input.url.slice(0, 60)}` : '🔧 WebFetch';
     case 'WebSearch':
       return input.query ? `🔧 Search: ${input.query}` : '🔧 WebSearch';
+    case 'ToolSearch':
+      return input.query ? `🔧 ToolSearch: ${trunc(input.query, 80)}` : '🔧 ToolSearch';
+    case 'AskUserQuestion': {
+      const qs = Array.isArray(input.questions) ? input.questions : [];
+      if (qs.length > 0) {
+        const first = qs[0] || {};
+        const head = (typeof first.header === 'string' && first.header.trim())
+          ? first.header.trim()
+          : (typeof first.question === 'string' ? first.question.trim() : '');
+        const suffix = qs.length > 1 ? ` (+${qs.length - 1})` : '';
+        if (head) {
+          return `🔧 Ask: ${trunc(head, 80)}${suffix}`;
+        }
+        return `🔧 AskUserQuestion${suffix}`;
+      }
+      return '🔧 AskUserQuestion';
+    }
     default:
       if (name.startsWith('mcp__')) {
         const parts = name.split('__');
