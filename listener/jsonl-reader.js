@@ -237,6 +237,7 @@ function formatToolUse (tool) {
         if (input['-i']) flags.push('-i');
         if (input['-A']) flags.push(`-A ${input['-A']}`);
         if (input['-B']) flags.push(`-B ${input['-B']}`);
+        if (input.head_limit) flags.push(`head ${input.head_limit}`);
         const flagStr = flags.length ? ` ${flags.join(' ')}` : '';
 
         return where
@@ -283,6 +284,19 @@ function formatToolUse (tool) {
       return input.planFilePath
         ? `🔧 ExitPlanMode: ${path.basename(input.planFilePath)}`
         : '🔧 ExitPlanMode';
+    case 'Task':
+      if (input.description) {
+        const st = typeof input.subagent_type === 'string' && input.subagent_type.trim()
+          ? ` [${input.subagent_type.trim()}]`
+          : '';
+        return `🔧 Task${st}: ${trunc(input.description, 80)}`;
+      }
+      return '🔧 Task';
+    case 'TaskOutput':
+      if (input.task_id) {
+        return `🔧 Task#${input.task_id}: output${input.timeout ? ` (timeout ${input.timeout})` : ''}`;
+      }
+      return '🔧 TaskOutput';
     case 'AskUserQuestion': {
       const qs = Array.isArray(input.questions) ? input.questions : [];
       if (qs.length > 0) {
@@ -299,6 +313,48 @@ function formatToolUse (tool) {
       return '🔧 AskUserQuestion';
     }
     default:
+      if (name.startsWith('mcp__playwright__browser_')) {
+        const action = name.slice('mcp__playwright__browser_'.length);
+        switch (action) {
+          case 'navigate':
+            return input.url ? `🔧 PW nav: ${trunc(input.url, 80)}` : '🔧 PW nav';
+          case 'click': {
+            const ref = typeof input.ref === 'string' ? input.ref : '';
+            const el = typeof input.element === 'string' ? input.element : '';
+            return `🔧 PW click: ${trunc(ref || el || '', 80)}`.trim();
+          }
+          case 'type': {
+            const ref = typeof input.ref === 'string' ? input.ref : '';
+            const text = typeof input.text === 'string' ? input.text : '';
+            return `🔧 PW type: ${trunc(ref || '', 40)}${text ? ` (${text.length} chars)` : ''}`.trim();
+          }
+          case 'take_screenshot':
+            return input.filename ? `🔧 PW shot: ${trunc(input.filename, 80)}` : '🔧 PW shot';
+          case 'wait_for':
+            return input.time ? `🔧 PW wait: ${input.time}` : '🔧 PW wait';
+          case 'console_messages':
+            return input.level ? `🔧 PW console: ${input.level}` : '🔧 PW console';
+          case 'snapshot':
+            return '🔧 PW snapshot';
+          default:
+            return `🔧 PW: ${action}`;
+        }
+      }
+      if (name === 'mcp__sequential-thinking__sequentialthinking') {
+        const n = input.thoughtNumber;
+        const total = input.totalThoughts;
+        const head = (typeof n === 'number' || typeof n === 'string') && (typeof total === 'number' || typeof total === 'string')
+          ? `${n}/${total} `
+          : '';
+        const thought = typeof input.thought === 'string' ? trunc(input.thought.trim(), 80) : '';
+        return `🔧 Think: ${head}${thought}`.trim();
+      }
+      if (name === 'mcp__serena__list_dir') {
+        return input.relative_path ? `🔧 Serena ls: ${trunc(input.relative_path, 80)}` : '🔧 Serena ls';
+      }
+      if (name === 'mcp__serena__get_symbols_overview') {
+        return input.relative_path ? `🔧 Serena symbols: ${trunc(input.relative_path, 80)}` : '🔧 Serena symbols';
+      }
       if (name.startsWith('mcp__')) {
         const parts = name.split('__');
         return parts.length >= 3 ? `🔧 MCP ${parts[1]}: ${parts[2]}` : `🔧 ${name}`;
