@@ -12,6 +12,7 @@ import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { parseMessage, parseTarget } from './message-parser.js';
 import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME } from '../bin/constants.js';
+import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime } from './jsonl-reader.js';
 
 // ----------------------
 // CRASH PROTECTION
@@ -138,6 +139,11 @@ const sessions = new Map();
 const freshSessionDirs = new Set();
 // Live console intervals per workDir
 const liveConsoleTimers = new Map();
+// JSONL readers per workDir (for live console from structured session data)
+const jsonlReaders = new Map();
+// Live console source: "jsonl" | "pty" | "auto" (default: "auto")
+const liveConsoleSource = listenerConfig.liveConsoleSource || 'auto';
+const jsonlMaxContentChars = listenerConfig.jsonlMaxContentChars || 500;
 
 logger.info('Listener started');
 logger.info(`Projects: ${JSON.stringify(Object.keys(listenerConfig.projects))}`);
@@ -322,6 +328,49 @@ function shouldContinueSession (workDir) {
   return sessions.has(workDir);
 }
 
+function _initJsonlReader (workDir) {
+  const sessionId = runner.getSessionId(workDir);
+  const jsonlPath = sessionId
+    ? resolveJsonlPath(workDir, sessionId)
+    : resolveJsonlByMtime(workDir);
+  if (jsonlPath) {
+    const reader = new JsonlReader(jsonlPath, logger);
+    jsonlReaders.set(workDir, reader);
+    logger.info(`JSONL reader initialized: ${jsonlPath}`);
+    return reader;
+  }
+  return null;
+}
+
+function _getJsonlContent (workDir) {
+  let reader = jsonlReaders.get(workDir);
+  if (!reader) {
+    reader = _initJsonlReader(workDir);
+  }
+  if (!reader) {
+    return null;
+  }
+  reader.readNew();
+  return reader.getDisplayContent(jsonlMaxContentChars);
+}
+
+function _getPtyContent (workDir) {
+  const raw = runner.getBuffer(workDir);
+  if (!raw) {
+    return null;
+  }
+  const cleaned = cleanPtyOutput(raw);
+  if (!cleaned) {
+    return null;
+  }
+  const tail = cleaned.length > liveConsoleMaxOutputChars
+    ? cleaned.slice(-liveConsoleMaxOutputChars)
+    : cleaned;
+  return cleaned.length > liveConsoleMaxOutputChars
+    ? tail.slice(tail.indexOf('\n') + 1)
+    : tail;
+}
+
 function startLiveConsole (workDir, messageId, header) {
   stopLiveConsole(workDir);
   if (!liveConsoleEnabled || !messageId) {
@@ -330,22 +379,13 @@ function startLiveConsole (workDir, messageId, header) {
   let lastSentText = '';
   const timer = setInterval(async () => {
     try {
-      const raw = runner.getBuffer(workDir);
-      if (!raw) {
-        return;
+      let output = null;
+      if (liveConsoleSource === 'jsonl' || liveConsoleSource === 'auto') {
+        output = _getJsonlContent(workDir);
       }
-      const cleaned = cleanPtyOutput(raw);
-      if (!cleaned) {
-        return;
+      if (!output && (liveConsoleSource === 'pty' || liveConsoleSource === 'auto')) {
+        output = _getPtyContent(workDir);
       }
-      // Take the tail that fits
-      const tail = cleaned.length > liveConsoleMaxOutputChars
-        ? cleaned.slice(-liveConsoleMaxOutputChars)
-        : cleaned;
-      // Trim to last complete line if we sliced mid-line
-      const output = cleaned.length > liveConsoleMaxOutputChars
-        ? tail.slice(tail.indexOf('\n') + 1)
-        : tail;
       if (!output || output === lastSentText) {
         return;
       }
@@ -370,6 +410,7 @@ function stopLiveConsole (workDir) {
     clearInterval(timer);
     liveConsoleTimers.delete(workDir);
   }
+  jsonlReaders.delete(workDir);
 }
 
 async function startTask (workDir, task) {
@@ -830,17 +871,27 @@ function formatPtyInfo (project, branch, workDir, info) {
     ? formatDuration(Date.now() - new Date(info.startedAt).getTime())
     : '-';
   const liveTimer = liveConsoleTimers.has(workDir) ? '✅' : '❌';
-  const raw = runner.getBuffer(workDir);
-  const cleaned = raw ? cleanPtyOutput(raw) : '';
-  const lastLines = cleaned
-    ? cleaned.split('\n').slice(-15).join('\n')
-    : '(empty)';
+  const hasJsonl = jsonlReaders.has(workDir) ? '✅' : '❌';
+
+  // Prefer JSONL content if available, fall back to PTY buffer
+  let lastLines = '(empty)';
+  const jsonlContent = _getJsonlContent(workDir);
+  if (jsonlContent) {
+    lastLines = jsonlContent.split('\n').slice(-15).join('\n');
+  } else {
+    const raw = runner.getBuffer(workDir);
+    const cleaned = raw ? cleanPtyOutput(raw) : '';
+    if (cleaned) {
+      lastLines = cleaned.split('\n').slice(-15).join('\n');
+    }
+  }
 
   return `<b>${escapeHtml(label)}</b>
 State: <code>${info.state}</code>
 Buffer: <code>${info.bufferSize}</code> bytes
 Elapsed: ${elapsed}
 Live console: ${liveTimer}
+JSONL source: ${hasJsonl}
 PTY log: <code>${info.hasLogStream ? 'writing' : 'off'}</code>
 
 <pre>${escapeHtml(lastLines)}</pre>`;

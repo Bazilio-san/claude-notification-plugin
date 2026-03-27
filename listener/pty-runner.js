@@ -135,12 +135,16 @@ export class PtyRunner extends EventEmitter {
           }
         }
       } else if (type === 'ready') {
-        // SessionStart — emit ready event
+        // SessionStart — emit ready event, capture sessionId from filename
         this._unlinkSafe(filePath);
+        const signalSessionId = f.startsWith('rdy_') ? f.slice(4, -5) : null;
         for (const [workDir, session] of this.sessions) {
           if (this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
             session._lastActivityTime = Date.now();
             session._model = marker.model || '';
+            if (signalSessionId && signalSessionId !== 'unknown') {
+              session.sessionId = signalSessionId;
+            }
             this.emit('ready', workDir, marker);
             break;
           }
@@ -611,6 +615,14 @@ export class PtyRunner extends EventEmitter {
   getBuffer (workDir) {
     const session = this.sessions.get(workDir);
     return session?._buffer || '';
+  }
+
+  /**
+   * Get Claude session ID for a workDir (captured from SessionStart hook signal).
+   */
+  getSessionId (workDir) {
+    const session = this.sessions.get(workDir);
+    return session?.sessionId || null;
   }
 
   /**

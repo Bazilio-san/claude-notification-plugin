@@ -204,6 +204,7 @@ Running two listeners is impossible — the PID file prevents it. And this is im
 | **WorktreeManager** | `worktree-manager.js` | Creates and removes git worktrees. Auto-discovery via `git worktree list`. Maps `&project/branch` to a path on disk |
 | **Logger** | `logger.js` | Writes operational log to `~/.claude/.cc-n-listener.log`. Rotation when exceeding 5 MB (old file → `.log.old`) |
 | **TaskLogger** | `task-logger.js` | Writes task Q&A logs (questions to Claude and answers). Separate file per project/branch. Rotation at 5 MB |
+| **JsonlReader** | `jsonl-reader.js` | Reads Claude Code's structured JSONL session files incrementally. Provides clean, semantic live console content (text responses, tool calls) instead of raw PTY output |
 
 ---
 
@@ -762,14 +763,91 @@ Shows a brief reference for all commands.
 
 ### Live console
 
-When **`liveConsole`** is enabled (default: `true`), the "⏳ Running..." message in Telegram is periodically updated with the cleaned tail of Claude Code's PTY output, so you can see what Claude is doing in real-time.
+When **`liveConsole`** is enabled (default: `true`), the "⏳ Running..." message in Telegram is periodically updated with what Claude is doing in real-time.
 
-The output is cleaned from ANSI escape codes and Claude Code UI chrome (logo, status bar, prompts), leaving only meaningful content.
+#### Data source: JSONL vs PTY
 
-Configuration:
-- `liveConsole` — enable/disable (default: `true`)
-- `liveConsoleIntervalMillis` — update interval in seconds (default: `1`)
-- `liveConsoleMaxOutputChars` — max characters of PTY output to show (default: `300`)
+The live console can read data from two sources:
+
+1. **JSONL session files** (default, preferred) — Claude Code writes structured JSONL files to `~/.claude/projects/{encodedCwd}/{sessionId}.jsonl`. Each line is a full JSON message with role, content (text, tool_use, thinking), model, timestamps, and cost. This gives clean, semantic output: the actual text Claude wrote and which tools it called.
+
+2. **PTY buffer** (fallback) — raw terminal output from the pseudo-terminal, cleaned from ANSI escape codes and Claude Code UI chrome. This is a legacy approach that produces noisier output.
+
+Controlled by the `liveConsoleSource` config parameter:
+- `"auto"` (default) — try JSONL first, fall back to PTY buffer
+- `"jsonl"` — use only JSONL (no output if file not found)
+- `"pty"` — use only PTY buffer (legacy behavior)
+
+#### How the JSONL path is resolved
+
+The JSONL file path follows the convention:
+```
+~/.claude/projects/{encodedCwd}/{sessionId}.jsonl
+```
+
+**Step 1: Determine `sessionId`**
+
+When Claude Code starts a session, its `SessionStart` hook writes a signal file `rdy_{sessionId}.json` to `~/.claude/pty-signals/`. The listener's PTY runner already polls this directory. On receiving a `ready` signal, the runner extracts `sessionId` from the filename and stores it in the session state.
+
+**Step 2: Encode `cwd` into a project directory name**
+
+Claude Code encodes the working directory path into a folder name by replacing special characters with dashes:
+
+| Character | Replacement |
+|---|---|
+| `:` | `-` |
+| `\` | `-` |
+| `/` | `-` |
+| `.` | `-` |
+| `_` | `-` |
+
+All other characters (letters, digits, existing `-`) are preserved as-is.
+
+Examples:
+
+| Working directory | Encoded project dir |
+|---|---|
+| `D:\DEV\FA\_pub\claude-notification-plugin` | `D--DEV-FA--pub-claude-notification-plugin` |
+| `D:\DEV\FA\_cur\work-fast--testing` | `D--DEV-FA--cur-work-fast--testing` |
+| `/home/user/projects/api-server` | `-home-user-projects-api-server` |
+
+The double dashes (`--`) arise naturally from consecutive special characters, e.g. `\_` → `-` + `-` = `--`.
+
+**Step 3: Construct the full path and open a reader**
+
+```
+sessionId = "08b1fa75-91fe-4c1e-a47e-db9b99af7fb5"
+cwd = "D:\DEV\FA\_pub\claude-notification-plugin"
+  ↓ encode
+encodedCwd = "D--DEV-FA--pub-claude-notification-plugin"
+  ↓ join
+path = ~/.claude/projects/D--DEV-FA--pub-claude-notification-plugin/08b1fa75-91fe-4c1e-a47e-db9b99af7fb5.jsonl
+```
+
+If `sessionId` is not yet known (session hasn't started), the fallback picks the most recently modified `.jsonl` file in the project directory (within the last 2 minutes).
+
+#### What is displayed
+
+From the JSONL data, the live console extracts:
+- **Text responses** — the actual text Claude wrote (from `content[].type === "text"`)
+- **Tool calls** — formatted as `🔧 Read: config.json`, `🔧 $ npm test`, `🔧 Grep: pattern`, etc. (from `content[].type === "tool_use"`)
+- **Thinking blocks** are skipped (not shown)
+
+This is far more informative than raw PTY output: you see the real tool calls and actual responses, not garbled terminal fragments.
+
+#### Incremental reading
+
+The JSONL reader tracks its byte offset in the file and only reads new data on each poll. Since JSONL files are append-only, this is safe and efficient — no re-reading of the entire file.
+
+#### Configuration
+
+| Parameter | Default | Description |
+|---|---|---|
+| `liveConsole` | `true` | Enable/disable live console |
+| `liveConsoleIntervalMillis` | `1000` | Update interval in milliseconds |
+| `liveConsoleMaxOutputChars` | `300` | Max chars of PTY output per update |
+| `liveConsoleSource` | `"auto"` | Data source: `"auto"`, `"jsonl"`, or `"pty"` |
+| `jsonlMaxContentChars` | `500` | Max chars of JSONL content per update |
 
 ### PTY logs
 
@@ -792,8 +870,9 @@ Send `/pty` or `/pty &project` in Telegram to get instant diagnostics:
 - Buffer size in bytes
 - Elapsed time since task start
 - Whether live console interval is active
+- Whether JSONL source is active
 - Whether PTY log stream is writing
-- Last 15 lines of cleaned output
+- Last 15 lines of output (from JSONL if available, otherwise from PTY buffer)
 
 ---
 
