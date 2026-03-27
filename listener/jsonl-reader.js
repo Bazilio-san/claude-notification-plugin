@@ -220,22 +220,44 @@ function formatToolUse (tool) {
         : `🔧 ${name}`;
     case 'Bash':
       return input.command
-        ? `🔧 $ ${trunc(input.command, 80)}`
+        ? `🔧 $ ${trunc(input.command, 200)}`
         : '🔧 Bash';
     case 'Grep':
-      return input.pattern ? `🔧 Grep: ${input.pattern}` : '🔧 Grep';
+      if (input.pattern) {
+        const where = typeof input.path === 'string'
+          ? path.basename(input.path)
+          : (typeof input.glob === 'string' ? input.glob : '');
+
+        const flags = [];
+        if (input['-n']) flags.push('-n');
+        if (input['-C']) flags.push(`-C ${input['-C']}`);
+        const flagStr = flags.length ? ` ${flags.join(' ')}` : '';
+
+        return where
+          ? `🔧 Grep${flagStr}: ${trunc(input.pattern, 60)} in ${trunc(where, 30)}`
+          : `🔧 Grep${flagStr}: ${trunc(input.pattern, 80)}`;
+      }
+      return '🔧 Grep';
     case 'Glob':
-      return input.pattern ? `🔧 Glob: ${input.pattern}` : '🔧 Glob';
+      if (input.pattern) {
+        const p = typeof input.path === 'string' ? path.basename(input.path) : '';
+        return p ? `🔧 Glob: ${trunc(input.pattern, 60)} in ${trunc(p, 30)}` : `🔧 Glob: ${trunc(input.pattern, 80)}`;
+      }
+      return '🔧 Glob';
     case 'Agent':
       return input.description ? `🔧 Agent: ${input.description}` : '🔧 Agent';
     case 'Skill':
       return input.skill ? `🔧 Skill: ${input.skill}` : '🔧 Skill';
     case 'WebFetch':
-      return input.url ? `🔧 Fetch: ${input.url.slice(0, 60)}` : '🔧 WebFetch';
+      if (input.url) {
+        const hasPrompt = typeof input.prompt === 'string' && input.prompt.trim();
+        return `🔧 Fetch${hasPrompt ? '*' : ''}: ${trunc(input.url, 80)}`;
+      }
+      return '🔧 WebFetch';
     case 'WebSearch':
       return input.query ? `🔧 Search: ${input.query}` : '🔧 WebSearch';
     case 'ToolSearch':
-      return input.query ? `🔧 ToolSearch: ${trunc(input.query, 80)}` : '🔧 ToolSearch';
+      return input.query ? `🔧 ToolSearch: ${trunc(input.query, 200)}` : '🔧 ToolSearch';
     case 'AskUserQuestion': {
       const qs = Array.isArray(input.questions) ? input.questions : [];
       if (qs.length > 0) {
@@ -245,7 +267,7 @@ function formatToolUse (tool) {
           : (typeof first.question === 'string' ? first.question.trim() : '');
         const suffix = qs.length > 1 ? ` (+${qs.length - 1})` : '';
         if (head) {
-          return `🔧 Ask: ${trunc(head, 80)}${suffix}`;
+          return `🔧 Ask: ${trunc(head, 120)}${suffix}`;
         }
         return `🔧 AskUserQuestion${suffix}`;
       }
