@@ -220,7 +220,7 @@ function formatToolUse (tool) {
         : `🔧 ${name}`;
     case 'Bash':
       return input.command
-        ? `🔧 $ ${trunc(input.command, 200)}`
+        ? `🔧 $ ${trunc(input.command, 80)}${input.timeout ? ` (timeout ${input.timeout})` : ''}`
         : '🔧 Bash';
     case 'Grep':
       if (input.pattern) {
@@ -231,6 +231,9 @@ function formatToolUse (tool) {
         const flags = [];
         if (input['-n']) flags.push('-n');
         if (input['-C']) flags.push(`-C ${input['-C']}`);
+        if (input['-i']) flags.push('-i');
+        if (input['-A']) flags.push(`-A ${input['-A']}`);
+        if (input['-B']) flags.push(`-B ${input['-B']}`);
         const flagStr = flags.length ? ` ${flags.join(' ')}` : '';
 
         return where
@@ -245,7 +248,14 @@ function formatToolUse (tool) {
       }
       return '🔧 Glob';
     case 'Agent':
-      return input.description ? `🔧 Agent: ${input.description}` : '🔧 Agent';
+      if (input.description) {
+        const bg = input.run_in_background ? ' (bg)' : '';
+        const st = typeof input.subagent_type === 'string' && input.subagent_type.trim()
+          ? ` [${input.subagent_type.trim()}]`
+          : '';
+        return `🔧 Agent${bg}${st}: ${trunc(input.description, 80)}`;
+      }
+      return '🔧 Agent';
     case 'Skill':
       return input.skill ? `🔧 Skill: ${input.skill}` : '🔧 Skill';
     case 'WebFetch':
