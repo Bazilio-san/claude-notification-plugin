@@ -220,7 +220,7 @@ function formatToolUse (tool) {
         : `🔧 ${name}`;
     case 'Bash':
       return input.command
-        ? `🔧 $ ${trunc(input.command, 80)}${input.timeout ? ` (timeout ${input.timeout})` : ''}`
+        ? `🔧 $ ${trunc(input.command, 80)}${input.run_in_background ? ' (bg)' : ''}${input.timeout ? ` (timeout ${input.timeout})` : ''}`
         : '🔧 Bash';
     case 'Grep':
       if (input.pattern) {
@@ -231,6 +231,9 @@ function formatToolUse (tool) {
         const flags = [];
         if (input['-n']) flags.push('-n');
         if (input['-C']) flags.push(`-C ${input['-C']}`);
+        if (!input['-C'] && (typeof input.context === 'number' || typeof input.context === 'string')) {
+          flags.push(`-C ${input.context}`);
+        }
         if (input['-i']) flags.push('-i');
         if (input['-A']) flags.push(`-A ${input['-A']}`);
         if (input['-B']) flags.push(`-B ${input['-B']}`);
@@ -268,6 +271,18 @@ function formatToolUse (tool) {
       return input.query ? `🔧 Search: ${input.query}` : '🔧 WebSearch';
     case 'ToolSearch':
       return input.query ? `🔧 ToolSearch: ${trunc(input.query, 200)}` : '🔧 ToolSearch';
+    case 'TaskCreate':
+      return input.subject
+        ? `🔧 Task+: ${trunc(input.subject, 100)}`
+        : '🔧 TaskCreate';
+    case 'TaskUpdate':
+      return input.taskId && input.status
+        ? `🔧 Task#${input.taskId}: ${input.status}`
+        : (input.taskId ? `🔧 Task#${input.taskId}` : '🔧 TaskUpdate');
+    case 'ExitPlanMode':
+      return input.planFilePath
+        ? `🔧 ExitPlanMode: ${path.basename(input.planFilePath)}`
+        : '🔧 ExitPlanMode';
     case 'AskUserQuestion': {
       const qs = Array.isArray(input.questions) ? input.questions : [];
       if (qs.length > 0) {
