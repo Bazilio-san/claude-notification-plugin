@@ -261,7 +261,9 @@ function formatToolUse (tool) {
       }
       return '🔧 Agent';
     case 'Skill':
-      return input.skill ? `🔧 Skill: ${input.skill}` : '🔧 Skill';
+      return input.skill
+        ? `🔧 Skill: ${input.skill}${input.args ? ` ${trunc(String(input.args), 80)}` : ''}`
+        : '🔧 Skill';
     case 'WebFetch':
       if (input.url) {
         const hasPrompt = typeof input.prompt === 'string' && input.prompt.trim();
@@ -356,6 +358,16 @@ function formatToolUse (tool) {
         return input.relative_path ? `🔧 Serena symbols: ${trunc(input.relative_path, 80)}` : '🔧 Serena symbols';
       }
       if (name.startsWith('mcp__')) {
+        if (name === 'mcp__context7__resolve-library-id') {
+          return input.libraryName
+            ? `🔧 C7 lib: ${trunc(input.libraryName, 60)}`
+            : '🔧 C7 resolve';
+        }
+        if (name === 'mcp__context7__query-docs') {
+          const lib = typeof input.libraryId === 'string' ? input.libraryId : '';
+          const q = typeof input.query === 'string' ? input.query : '';
+          return `🔧 C7 docs: ${trunc(q || lib || '', 80)}`.trim();
+        }
         const parts = name.split('__');
         return parts.length >= 3 ? `🔧 MCP ${parts[1]}: ${parts[2]}` : `🔧 ${name}`;
       }
