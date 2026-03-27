@@ -63,6 +63,7 @@ function loadConfig () {
     webhookUrl: '',
     notifyAfterSeconds: 15,
     notifyOnWaiting: false,
+    notifyOnPermission: true,
     debug: false,
   };
 
@@ -87,6 +88,9 @@ function loadConfig () {
       }
       if (typeof user.notifyOnWaiting === 'boolean') {
         config.notifyOnWaiting = user.notifyOnWaiting;
+      }
+      if (typeof user.notifyOnPermission === 'boolean') {
+        config.notifyOnPermission = user.notifyOnPermission;
       }
       if (typeof user.debug === 'boolean') {
         config.debug = user.debug;
@@ -121,6 +125,9 @@ function loadConfig () {
   }
   if (process.env.CLAUDE_NOTIFY_WAITING !== undefined) {
     config.notifyOnWaiting = process.env.CLAUDE_NOTIFY_WAITING === '1';
+  }
+  if (process.env.CLAUDE_NOTIFY_ON_PERMISSION !== undefined) {
+    config.notifyOnPermission = process.env.CLAUDE_NOTIFY_ON_PERMISSION === '1';
   }
   if (process.env.CLAUDE_NOTIFY_DEBUG !== undefined) {
     config.debug = process.env.CLAUDE_NOTIFY_DEBUG === '1';
@@ -641,11 +648,10 @@ function getVoicePhrase (duration, project) {
   return fn(duration, project || 'unknown');
 }
 
-function speakResult (config, duration, project) {
+function speakText (config, text) {
   if (!config.voice.enabled) {
     return;
   }
-  const text = getVoicePhrase(duration, project);
   try {
     switch (PLATFORM) {
       case 'win32': {
@@ -672,8 +678,24 @@ function speakResult (config, duration, project) {
       }
     }
   } catch (err) {
-    debugLog(config, 'speakResult failed:', err.message);
+    debugLog(config, 'speakText failed:', err.message);
   }
+}
+
+function speakResult (config, duration, project) {
+  speakText(config, getVoicePhrase(duration, project));
+}
+
+const permissionVoicePhrases = {
+  en: (p, tool) => `Claude needs your permission on ${p} for ${tool}`,
+  ru: (p, tool) => `Клод ожидает разрешение в проекте ${p} на ${tool}`,
+};
+
+function getPermissionVoicePhrase (project, toolName) {
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
+  const lang = locale.split('-')[0].toLowerCase();
+  const fn = permissionVoicePhrases[lang] || permissionVoicePhrases.en;
+  return fn(project || 'unknown', toolName || 'unknown');
 }
 
 // ----------------------
@@ -760,11 +782,15 @@ process.stdin.on('end', async () => {
   // STOP / NOTIFICATION EVENT
   // ----------------------
 
-  if (eventType !== 'Stop' && eventType !== 'Notification' && eventType !== 'StopFailure') {
+  if (eventType !== 'Stop' && eventType !== 'Notification' && eventType !== 'StopFailure' && eventType !== 'PermissionRequest') {
     process.exit(0);
   }
 
   if (eventType === 'Notification' && !config.notifyOnWaiting) {
+    process.exit(0);
+  }
+
+  if (eventType === 'PermissionRequest' && !config.notifyOnPermission) {
     process.exit(0);
   }
 
@@ -778,8 +804,21 @@ process.stdin.on('end', async () => {
     process.exit(0);
   }
 
-  const statusEmoji = eventType === 'Notification' ? '⏸' : eventType === 'StopFailure' ? '❌' : '✅';
-  const desktopStatus = eventType === 'Notification' ? 'Waiting' : eventType === 'StopFailure' ? `Error: ${event.error || 'unknown'}` : 'Finished';
+  const permToolName = event.tool_name || 'unknown';
+  const permDetail = event.tool_input?.file_path || event.tool_input?.command?.slice(0, 80) || '';
+
+  const statusEmoji = eventType === 'PermissionRequest' ? '🔐' : eventType === 'Notification' ? '⏸' : eventType === 'StopFailure' ? '❌' : '✅';
+
+  let desktopStatus;
+  if (eventType === 'PermissionRequest') {
+    desktopStatus = `Permission: ${permToolName}${permDetail ? ` — ${path.basename(permDetail)}` : ''}`;
+  } else if (eventType === 'Notification') {
+    desktopStatus = 'Waiting';
+  } else if (eventType === 'StopFailure') {
+    desktopStatus = `Error: ${event.error || 'unknown'}`;
+  } else {
+    desktopStatus = 'Finished';
+  }
 
   const branch = getBranch(cwd);
   let label = `/${project}`;
@@ -794,8 +833,16 @@ process.stdin.on('end', async () => {
   const desktopTitle = label;
   const desktopMessage = desktopStatus;
 
-  let telegramMessage =
-    `${statusEmoji}  ${labelHtml}\n(duration: ${duration}s)${triggerLine}`;
+  let telegramMessage;
+  if (eventType === 'PermissionRequest') {
+    telegramMessage = `${statusEmoji}  ${labelHtml}\nPermission: <b>${escapeHtml(permToolName)}</b>`;
+    if (permDetail) {
+      telegramMessage += `\n<code>${escapeHtml(permDetail)}</code>`;
+    }
+    telegramMessage += `\n(duration: ${duration}s)${triggerLine}`;
+  } else {
+    telegramMessage = `${statusEmoji}  ${labelHtml}\n(duration: ${duration}s)${triggerLine}`;
+  }
 
   if (config.telegram.includeLastCcMessageInTelegram && event.last_assistant_message) {
     const maxLen = 3500;
@@ -813,15 +860,24 @@ process.stdin.on('end', async () => {
     telegramMessage += debugBlockHtml;
   }
 
-  await sendWebhook(config, {
+  const webhookPayload = {
     title: `${desktopStatus}: ${label}`,
     project,
     branch: branch || undefined,
     duration,
     trigger: eventType,
-    voicePhrase: config.voice.enabled ? getVoicePhrase(duration, project) : null,
     hookEvent: event,
-  });
+  };
+  if (eventType === 'PermissionRequest') {
+    webhookPayload.toolName = permToolName;
+    webhookPayload.toolInput = event.tool_input || {};
+  }
+  if (config.voice.enabled) {
+    webhookPayload.voicePhrase = eventType === 'PermissionRequest'
+      ? getPermissionVoicePhrase(project, permToolName)
+      : getVoicePhrase(duration, project);
+  }
+  await sendWebhook(config, webhookPayload);
 
   state._telegramText = telegramMessage;
   await sendTelegram(config, state);
@@ -833,5 +889,9 @@ process.stdin.on('end', async () => {
 
   await sendDesktopNotification(config, desktopTitle, desktopMessage);
   playSound(config);
-  speakResult(config, duration, project);
+  if (eventType === 'PermissionRequest') {
+    speakText(config, getPermissionVoicePhrase(project, permToolName));
+  } else {
+    speakResult(config, duration, project);
+  }
 });

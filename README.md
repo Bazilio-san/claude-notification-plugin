@@ -134,6 +134,9 @@ ENV: `CLAUDE_NOTIFY_VOICE`
 **notifyOnWaiting** — Notify when Claude is waiting for input. Default: **false**
 ENV: `CLAUDE_NOTIFY_WAITING`
 
+**notifyOnPermission** — Notify when Claude asks for tool permission (e.g. file edit confirmation). Default: **true**
+ENV: `CLAUDE_NOTIFY_ON_PERMISSION`
+
 **webhookUrl** — POST notification JSON to this URL. When set, all events (including user prompts) are sent. Set env to empty string (`""`) to disable per-project.
 ENV: `CLAUDE_NOTIFY_WEBHOOK_URL`
 
