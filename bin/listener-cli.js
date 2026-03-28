@@ -6,7 +6,7 @@ import readline from 'readline';
 import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
-  HOME, CLAUDE_DIR, CONFIG_PATH, PID_PATH, LISTENER_LOG_FILENAME,
+  HOME, CLAUDE_DIR, CONFIG_PATH, PID_PATH, LISTENER_LOG_FILENAME, getDefaultProject,
 } from './constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -116,7 +116,7 @@ async function startDaemon () {
     console.error(JSON.stringify({
       listener: {
         projects: {
-          default: { path: '/path/to/your/project' },
+          myproject: { path: '/path/to/your/project', isDefault: true },
         },
       },
     }, null, 2));
@@ -453,7 +453,10 @@ async function setupListener () {
     maxTotalTasks: L.maxTotalTasks ?? 50,
     logDir: L.logDir || path.join(HOME, '.claude'),
     taskLogDir: L.taskLogDir || path.join(HOME, '.claude'),
-    projectPath: L.projects?.default?.path || '',
+    projectPath: (() => {
+      const defAlias = getDefaultProject(L.projects);
+      return defAlias ? (L.projects[defAlias]?.path || '') : '';
+    })(),
   };
 
   const rl = readline.createInterface({
@@ -520,30 +523,41 @@ Permission mode for claude -p (tools access):
 
   // --- Default project ---
   console.log('');
-  const projectInput = await ask(rl, `Default project path [${defaults.projectPath || '(none)'}]: `);
-  const rawProjectPath = projectInput || defaults.projectPath;
-
   L.projects = L.projects || {};
+  const currentDefaultAlias = getDefaultProject(L.projects);
+  const currentDefaultPath = currentDefaultAlias ? (L.projects[currentDefaultAlias]?.path || '') : '';
+
+  const projectInput = await ask(rl, `Default project path [${currentDefaultPath || '(none)'}]: `);
+  const rawProjectPath = projectInput || currentDefaultPath;
   let hasValidProject = false;
 
   if (rawProjectPath) {
     const validatedPath = await validateProjectPath(rl, rawProjectPath);
     if (validatedPath) {
-      L.projects.default = L.projects.default || {};
-      L.projects.default.path = validatedPath;
+      let aliasForDefault = currentDefaultAlias;
+      if (!aliasForDefault) {
+        const aliasInput = await ask(rl, 'Alias for default project: ');
+        aliasForDefault = aliasInput && isValidAlias(aliasInput) ? aliasInput : 'main';
+      }
+      L.projects[aliasForDefault] = L.projects[aliasForDefault] || {};
+      L.projects[aliasForDefault].path = validatedPath;
+      // Set isDefault on this project, clear from others
+      for (const proj of Object.values(L.projects)) {
+        if (typeof proj === 'object') {
+          delete proj.isDefault;
+        }
+      }
+      L.projects[aliasForDefault].isDefault = true;
       hasValidProject = true;
     } else {
-      delete L.projects.default;
       console.log('  \u26a0 Default project will not be set. Listener will not start without at least one project.');
     }
   } else {
-    delete L.projects.default;
     console.log('  \u26a0 No default project configured. Listener will not start without at least one project.');
   }
 
   // --- Additional projects loop ---
-  // Count existing non-default projects
-  const existingAliases = Object.keys(L.projects).filter(a => a !== 'default');
+  const existingAliases = Object.keys(L.projects);
   if (existingAliases.length > 0) {
     console.log(`\nExisting projects: ${existingAliases.join(', ')}`);
   }
@@ -561,10 +575,6 @@ Permission mode for claude -p (tools access):
       alias = await ask(rl, 'Project alias: ');
       if (!alias) {
         console.log('  \u26a0 Alias cannot be empty.');
-        continue;
-      }
-      if (alias === 'default') {
-        console.log('  \u26a0 "default" is reserved. Choose a different name.');
         continue;
       }
       if (!isValidAlias(alias)) {

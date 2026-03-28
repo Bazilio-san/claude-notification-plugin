@@ -29,11 +29,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
-function parseArgs(argv) {
+function parseArgs (argv) {
   const out = {};
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith('--')) continue;
+    if (!a.startsWith('--')) {
+      continue;
+    }
     const k = a.slice(2);
     const v = argv[i + 1];
     if (!v || v.startsWith('--')) {
@@ -57,38 +59,46 @@ const logPath = path.resolve(repoRoot, args.log || path.join('_logs', 'claude-js
 const MAX_LOG_EVENTS = Number.isFinite(Number(args.maxLogEvents)) ? Number(args.maxLogEvents) : 5000;
 const MAX_STRING = Number.isFinite(Number(args.maxString)) ? Number(args.maxString) : 200;
 
-function ensureDir(p) {
+function ensureDir (p) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
 }
 
-function safeReadJson(p, fallback) {
+function safeReadJson (p, fallback) {
   try {
-    if (!fs.existsSync(p)) return fallback;
+    if (!fs.existsSync(p)) {
+      return fallback;
+    }
     return JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch {
     return fallback;
   }
 }
 
-function atomicWriteJson(p, obj) {
+function atomicWriteJson (p, obj) {
   ensureDir(p);
   const tmp = `${p}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
   fs.renameSync(tmp, p);
 }
 
-function writeJsonlLine(fd, obj) {
+function writeJsonlLine (fd, obj) {
   fs.writeSync(fd, `${JSON.stringify(obj)}\n`, null, 'utf8');
 }
 
-function truncStr(s, n) {
-  if (typeof s !== 'string') return s;
-  if (s.length <= n) return s;
+function truncStr (s, n) {
+  if (typeof s !== 'string') {
+    return s;
+  }
+  if (s.length <= n) {
+    return s;
+  }
   return s.slice(0, Math.max(0, n - 1)) + '…';
 }
 
-function sanitizeString(s) {
-  if (typeof s !== 'string') return s;
+function sanitizeString (s) {
+  if (typeof s !== 'string') {
+    return s;
+  }
 
   // Telegram bot token in URL: /bot123456:ABC.../
   s = s.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, 'bot<redacted>');
@@ -104,14 +114,22 @@ function sanitizeString(s) {
   return truncStr(s, MAX_STRING);
 }
 
-function sanitizeValue(v, keyHint = '') {
+function sanitizeValue (v, keyHint = '') {
   const k = String(keyHint || '');
   const isSecretKey = /(token|password|secret|authorization|cookie|session|apikey|api_key)/i.test(k);
-  if (isSecretKey) return '<redacted>';
+  if (isSecretKey) {
+    return '<redacted>';
+  }
 
-  if (v == null) return v;
-  if (typeof v === 'string') return sanitizeString(v);
-  if (typeof v === 'number' || typeof v === 'boolean') return v;
+  if (v == null) {
+    return v;
+  }
+  if (typeof v === 'string') {
+    return sanitizeString(v);
+  }
+  if (typeof v === 'number' || typeof v === 'boolean') {
+    return v;
+  }
 
   if (Array.isArray(v)) {
     return v.slice(0, 20).map((x) => sanitizeValue(x, keyHint));
@@ -128,7 +146,7 @@ function sanitizeValue(v, keyHint = '') {
   return '<unserializable>';
 }
 
-function listDirs(p) {
+function listDirs (p) {
   let entries;
   try {
     entries = fs.readdirSync(p, { withFileTypes: true });
@@ -138,7 +156,7 @@ function listDirs(p) {
   return entries.filter(d => d.isDirectory()).map(d => path.join(p, d.name));
 }
 
-function listJsonlFiles(dir) {
+function listJsonlFiles (dir) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -169,8 +187,10 @@ writeJsonlLine(logFd, {
   cachePath,
 });
 
-function recordDiscovery(evt) {
-  if (logLimitReached) return false;
+function recordDiscovery (evt) {
+  if (logLimitReached) {
+    return false;
+  }
   if (logCount >= MAX_LOG_EVENTS) {
     logLimitReached = true;
     writeJsonlLine(logFd, {
@@ -186,7 +206,7 @@ function recordDiscovery(evt) {
   return true;
 }
 
-function ensureTool(toolName) {
+function ensureTool (toolName) {
   if (!cache.tools[toolName]) {
     cache.tools[toolName] = { keys: {} };
     return true;
@@ -194,17 +214,21 @@ function ensureTool(toolName) {
   return false;
 }
 
-async function scanFile(filePath) {
+async function scanFile (filePath) {
   const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
   let lineNo = 0;
 
   for await (const line of rl) {
-    if (logLimitReached) break;
+    if (logLimitReached) {
+      break;
+    }
     lineNo++;
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      continue;
+    }
 
     let obj;
     try {
@@ -214,11 +238,17 @@ async function scanFile(filePath) {
     }
 
     const blocks = obj?.message?.content;
-    if (!Array.isArray(blocks)) continue;
+    if (!Array.isArray(blocks)) {
+      continue;
+    }
 
     for (const b of blocks) {
-      if (logLimitReached) break;
-      if (!b || b.type !== 'tool_use') continue;
+      if (logLimitReached) {
+        break;
+      }
+      if (!b || b.type !== 'tool_use') {
+        continue;
+      }
       const toolName = String(b.name || 'unknown');
       const input = (b && typeof b.input === 'object' && b.input) ? b.input : {};
 
@@ -241,8 +271,12 @@ async function scanFile(filePath) {
       }
 
       for (const k of keys) {
-        if (logLimitReached) break;
-        if (cache.tools[toolName].keys[k]) continue;
+        if (logLimitReached) {
+          break;
+        }
+        if (cache.tools[toolName].keys[k]) {
+          continue;
+        }
         cache.tools[toolName].keys[k] = {
           firstSeenAt: new Date().toISOString(),
           example: {
@@ -271,20 +305,26 @@ let jsonlCount = 0;
 
 const dirs = listDirs(rootDir).sort((a, b) => a.localeCompare(b));
 for (const dir of dirs) {
-  if (logLimitReached) break;
+  if (logLimitReached) {
+    break;
+  }
   dirCount++;
   const jsonls = listJsonlFiles(dir);
-  if (jsonls.length === 0) continue;
+  if (jsonls.length === 0) {
+    continue;
+  }
 
   jsonlCount += jsonls.length;
   for (const f of jsonls) {
-    if (logLimitReached) break;
+    if (logLimitReached) {
+      break;
+    }
     fileCount++;
     // Progress every ~250 files to keep output calm.
     if (fileCount % 250 === 0) {
       process.stdout.write(`Scanned ${fileCount}/${jsonlCount || '?'} JSONL files...\n`);
     }
-    // eslint-disable-next-line no-await-in-loop
+     
     await scanFile(f);
   }
 }

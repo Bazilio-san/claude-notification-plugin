@@ -7,12 +7,15 @@
  *   /command args           → { type: 'command', cmd, args }
  *   &project/branch text    → { type: 'task', project, branch, text }
  *   &project text           → { type: 'task', project, branch: null, text }
- *   text                    → { type: 'task', project: 'default', branch: null, text }
+ *   text                    → { type: 'task', project: <defaultProject>, branch: null, text }
  *
  * Any /word is treated as a command (known or unknown).
  * Project designation uses & prefix: &project or &project/branch.
+ *
+ * @param {string} text - The message text.
+ * @param {string} [defaultProject] - Alias of the default project (used for plain text tasks).
  */
-export function parseMessage (text) {
+export function parseMessage (text, defaultProject) {
   if (!text || typeof text !== 'string') {
     return null;
   }
@@ -61,7 +64,7 @@ export function parseMessage (text) {
   // Plain text → default project
   return {
     type: 'task',
-    project: 'default',
+    project: defaultProject || 'default',
     branch: null,
     text: trimmed,
   };

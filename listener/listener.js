@@ -11,7 +11,7 @@ import { WorkQueue } from './work-queue.js';
 import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { parseMessage, parseTarget } from './message-parser.js';
-import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME } from '../bin/constants.js';
+import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME, getDefaultProject, saveConfig } from '../bin/constants.js';
 import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime } from './jsonl-reader.js';
 
 // ----------------------
@@ -514,6 +514,8 @@ async function handleCommand (cmd, args) {
       return handleNewSession(args);
     case '/projects':
       return handleProjects();
+    case '/setdefault':
+      return handleSetDefault(args);
     case '/worktrees':
       return handleWorktrees(args);
     case '/worktree':
@@ -652,7 +654,7 @@ function handleQueue () {
 
 async function handleCancel (args) {
   const target = parseTarget(args);
-  const projectAlias = target?.project || 'default';
+  const projectAlias = target?.project || getDefaultProject(listenerConfig.projects);
   const branch = target?.branch || null;
 
   let workDir;
@@ -703,7 +705,7 @@ function handleDrop (args) {
 
 function handleClear (args) {
   const target = parseTarget(args);
-  const projectAlias = target?.project || 'default';
+  const projectAlias = target?.project || getDefaultProject(listenerConfig.projects);
   const branch = target?.branch || null;
 
   let workDir;
@@ -726,7 +728,7 @@ function handleClear (args) {
 
 function handleNewSession (args) {
   const target = parseTarget(args);
-  const projectAlias = target?.project || 'default';
+  const projectAlias = target?.project || getDefaultProject(listenerConfig.projects);
   const branch = target?.branch || null;
 
   let workDir;
@@ -751,10 +753,12 @@ function handleNewSession (args) {
 
 function handleProjects () {
   const projects = listenerConfig.projects;
+  const defaultAlias = getDefaultProject(projects);
   let text = '📂 <b>Projects:</b>\n';
   for (const [alias, proj] of Object.entries(projects)) {
     const projPath = typeof proj === 'string' ? proj : proj.path;
-    text += `\n<b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
+    const icon = alias === defaultAlias ? '🏠 ' : '';
+    text += `\n${icon}<b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
     const worktrees = typeof proj === 'object' ? proj.worktrees : null;
     if (worktrees && Object.keys(worktrees).length > 0) {
       for (const [branch, wtPath] of Object.entries(worktrees)) {
@@ -762,7 +766,63 @@ function handleProjects () {
       }
     }
   }
-  return text;
+
+  const buttons = [];
+  // "Set Default" button
+  buttons.push([{ text: '🏠 Set Default', callback_data: '/setdefault' }]);
+
+  return { text, replyMarkup: { inline_keyboard: buttons } };
+}
+
+function handleSetDefault (args) {
+  const projects = listenerConfig.projects;
+
+  // No args — show inline keyboard with project list
+  if (!args || !args.trim()) {
+    const defaultAlias = getDefaultProject(projects);
+    const buttons = [];
+    for (const [alias, proj] of Object.entries(projects)) {
+      const projPath = typeof proj === 'string' ? proj : proj.path;
+      const icon = alias === defaultAlias ? '🏠 ' : '';
+      buttons.push([{
+        text: `${icon}${alias} — ${projPath}`,
+        callback_data: `/setdefault ${alias}`,
+      }]);
+    }
+    return {
+      text: '🏠 <b>Select default project:</b>',
+      replyMarkup: { inline_keyboard: buttons },
+    };
+  }
+
+  // Args provided — set the default
+  const alias = args.trim();
+  if (!projects[alias]) {
+    return `❌ Project "<b>${escapeHtml(alias)}</b>" not found. Use /projects to list.`;
+  }
+
+  // Clear isDefault from all projects, set on chosen
+  for (const proj of Object.values(projects)) {
+    if (typeof proj === 'object') {
+      delete proj.isDefault;
+    }
+  }
+  const proj = projects[alias];
+  if (typeof proj === 'object') {
+    proj.isDefault = true;
+  }
+
+  // Persist to config file
+  try {
+    saveConfig(config);
+    logger.info(`Default project changed to "${alias}"`);
+  } catch (err) {
+    logger.error(`Failed to save config: ${err.message}`);
+    return `❌ Failed to save config: ${escapeHtml(err.message)}`;
+  }
+
+  const projPath = typeof proj === 'string' ? proj : proj.path;
+  return `✅ Default project: <b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
 }
 
 function handleWorktrees (args) {
@@ -931,6 +991,9 @@ const MENU_KEYBOARD = {
     [
       { text: '📜 History', callback_data: '/history' },
       { text: '🖥 PTY', callback_data: '/pty' },
+      { text: '🏠 Default', callback_data: '/setdefault' },
+    ],
+    [
       { text: '📖 Help', callback_data: '/help' },
     ],
   ],
@@ -948,6 +1011,7 @@ function handleHelp () {
 /clear &project[/branch] — clear queue + reset session
 /newsession [&project[/branch]] — reset session (keep queue)
 /projects — list projects
+/setdefault — change default project
 /worktrees &project — project worktrees
 /worktree &project/branch — create worktree
 /rmworktree &project/branch — remove worktree
@@ -1065,7 +1129,7 @@ async function mainLoop () {
           await poller.answerCallbackQuery(msg.callbackQueryId);
         }
 
-        const parsed = parseMessage(msg.text);
+        const parsed = parseMessage(msg.text, getDefaultProject(listenerConfig.projects));
         if (!parsed) {
           continue;
         }
@@ -1099,6 +1163,7 @@ async function mainLoop () {
     { command: 'status', description: 'Status of all projects' },
     { command: 'queue', description: 'Show all queues' },
     { command: 'projects', description: 'List projects' },
+    { command: 'setdefault', description: 'Change default project' },
     { command: 'history', description: 'Recent task history' },
     { command: 'pty', description: 'PTY session diagnostics' },
     { command: 'help', description: 'Show all commands' },

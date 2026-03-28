@@ -229,15 +229,27 @@ function formatToolUse (tool) {
           : (typeof input.glob === 'string' ? input.glob : '');
 
         const flags = [];
-        if (input['-n']) flags.push('-n');
-        if (input['-C']) flags.push(`-C ${input['-C']}`);
+        if (input['-n']) {
+          flags.push('-n');
+        }
+        if (input['-C']) {
+          flags.push(`-C ${input['-C']}`);
+        }
         if (!input['-C'] && (typeof input.context === 'number' || typeof input.context === 'string')) {
           flags.push(`-C ${input.context}`);
         }
-        if (input['-i']) flags.push('-i');
-        if (input['-A']) flags.push(`-A ${input['-A']}`);
-        if (input['-B']) flags.push(`-B ${input['-B']}`);
-        if (input.head_limit) flags.push(`head ${input.head_limit}`);
+        if (input['-i']) {
+          flags.push('-i');
+        }
+        if (input['-A']) {
+          flags.push(`-A ${input['-A']}`);
+        }
+        if (input['-B']) {
+          flags.push(`-B ${input['-B']}`);
+        }
+        if (input.head_limit) {
+          flags.push(`head ${input.head_limit}`);
+        }
         const flagStr = flags.length ? ` ${flags.join(' ')}` : '';
 
         return where

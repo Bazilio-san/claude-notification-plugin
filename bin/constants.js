@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -38,6 +39,31 @@ export const SHORTCUT_DIR = path.join(
 );
 export const SHORTCUT_PATH = path.join(SHORTCUT_DIR, SHORTCUT_NAME);
 export const APP_ID = 'Claude Notify';
+
+/**
+ * Find the alias of the project marked as default (isDefault: true).
+ * Falls back to the first project key if none is marked.
+ */
+export function getDefaultProject (projects) {
+  if (!projects || typeof projects !== 'object') {
+    return null;
+  }
+  for (const [alias, proj] of Object.entries(projects)) {
+    if (typeof proj === 'object' && proj.isDefault) {
+      return alias;
+    }
+  }
+  // Fallback: first project
+  const keys = Object.keys(projects);
+  return keys.length > 0 ? keys[0] : null;
+}
+
+/**
+ * Save config object back to CONFIG_PATH.
+ */
+export function saveConfig (config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
 
 // Plugin identity
 export const HOOK_COMMAND = 'claude-notify';
