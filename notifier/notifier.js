@@ -26,6 +26,28 @@ function debugLog (config, ...args) {
   }
 }
 
+function normalizePath (p) {
+  return path.resolve(p).replace(/\\/g, '/').toLowerCase();
+}
+
+function resolveProjectName (cwd, config) {
+  const fallback = path.basename(cwd);
+  const projects = config?.listenerProjects;
+  if (!projects || typeof projects !== 'object') {
+    return fallback;
+  }
+  const normalizedCwd = normalizePath(cwd);
+  for (const entry of Object.values(projects)) {
+    if (!entry?.path) {
+      continue;
+    }
+    if (normalizedCwd === normalizePath(entry.path) && entry.name) {
+      return entry.name;
+    }
+  }
+  return fallback;
+}
+
 function getBranch (cwd) {
   try {
     return execSync('git rev-parse --abbrev-ref HEAD', {
@@ -97,6 +119,9 @@ function loadConfig () {
       }
       if (typeof user.webhookUrl === 'string') {
         config.webhookUrl = user.webhookUrl;
+      }
+      if (user.listener?.projects) {
+        config.listenerProjects = user.listener.projects;
       }
     } catch {
       // ignore malformed config
@@ -720,7 +745,7 @@ process.stdin.on('end', async () => {
 
   const eventType = event.hook_event_name || 'unknown';
   const cwd = event.cwd || process.cwd();
-  const project = path.basename(cwd);
+  const project = resolveProjectName(cwd, config);
   const sessionId = event.session_id || 'default';
 
   const disabled = isNotifierDisabled();
