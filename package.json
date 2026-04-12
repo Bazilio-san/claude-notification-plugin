@@ -1,7 +1,7 @@
 {
   "name": "claude-notification-plugin",
   "productName": "claude-notification-plugin",
-  "version": "1.1.82",
+  "version": "1.1.83",
   "description": "Claude Code task-completion notifications: Telegram, desktop notifications (Windows/macOS/Linux), sound, and voice",
   "type": "module",
   "engines": {
