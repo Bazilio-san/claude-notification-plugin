@@ -717,6 +717,14 @@ The seen file (`~/.claude/claude-notify.seen.json`) is written atomically
 by the notifier on every hook event; oldest entries are evicted when the
 count exceeds 30.
 
+`/seen clear` (alias: `/seen reset`) wipes the file — useful when the
+list is full of stale entries after reorganizing project folders.
+
+```
+You: /seen clear
+Bot: ✅ Seen file cleared (17 entries removed).
+```
+
 ### /worktrees — project worktrees
 
 ```

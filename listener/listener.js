@@ -16,6 +16,7 @@ import {
   CONFIG_PATH,
   LISTENER_LOG_FILENAME,
   MAX_SEEN_ENTRIES,
+  SEEN_PROJECTS_PATH,
   getDefaultProject,
   saveConfig,
   normalizeForCompare,
@@ -528,7 +529,7 @@ async function handleCommand (cmd, args) {
     case '/addproject':
       return handleAddProject(args);
     case '/seen':
-      return handleSeen();
+      return handleSeen(args);
     case '/setdefault':
       return handleSetDefault(args);
     case '/worktrees':
@@ -973,7 +974,30 @@ Aliases for this command: /add-project, /add_project`;
   return `✅ Project added: <b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(absPath)}</code>`;
 }
 
-function handleSeen () {
+function handleSeen (args) {
+  const sub = (args || '').trim().toLowerCase();
+
+  if (sub === 'clear' || sub === 'reset') {
+    let count = 0;
+    try {
+      const data = loadSeenProjects();
+      count = data.entries.length;
+      // Atomic overwrite with an empty list
+      const tmp = `${SEEN_PROJECTS_PATH}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ entries: [] }, null, 2));
+      fs.renameSync(tmp, SEEN_PROJECTS_PATH);
+    } catch (err) {
+      logger.error(`Failed to clear seen file: ${err.message}`);
+      return `❌ Failed to clear seen file: ${escapeHtml(err.message)}`;
+    }
+    logger.info(`Seen file cleared (${count} entries removed)`);
+    return `✅ Seen file cleared (${count} entries removed).`;
+  }
+
+  if (sub && sub !== '') {
+    return `❌ Unknown subcommand "<b>${escapeHtml(sub)}</b>". Usage: /seen [clear]`;
+  }
+
   const { entries } = loadSeenProjects();
   if (!entries || entries.length === 0) {
     return 'ℹ No seen folders yet. Notifier will populate this list as you receive notifications.';
@@ -1199,6 +1223,7 @@ function handleHelp () {
 /projects — list projects
 /addproject &lt;alias&gt; &lt;path-or-/basename&gt; — register a project
 /seen — recent folders seen by notifier
+/seen clear — wipe the seen list
 /setdefault — change default project
 /worktrees &project — project worktrees
 /worktree &project/branch — create worktree

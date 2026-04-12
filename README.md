@@ -253,6 +253,7 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/addproject <alias> <path>`   | Register a project alias             |
 | `/addproject <alias> /<basename>` | Register using basename from `/seen` |
 | `/seen`                        | Recent folders seen by notifier      |
+| `/seen clear`                  | Wipe the seen list                   |
 | `/setdefault`                  | Change the default project           |
 | `/worktrees &project`          | List worktrees                       |
 | `/worktree &project/branch`    | Create a worktree                    |
