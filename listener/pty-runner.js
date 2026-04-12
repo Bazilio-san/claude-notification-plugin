@@ -406,9 +406,10 @@ export class PtyRunner extends EventEmitter {
     // Filter out pipe-mode-specific args
     const args = claudeArgs.filter(a => a !== '-p' && a !== '--output-format' && a !== 'json');
 
-    // Ensure --permission-mode is set (default: auto) to prevent interactive permission prompts
-    if (!args.includes('--permission-mode')) {
-      args.push('--permission-mode', 'auto');
+    // Ensure --permission-mode is set to prevent interactive permission prompts.
+    // Use bypassPermissions as default — "auto" is not available on all plans/providers.
+    if (!args.includes('--permission-mode') && !args.includes('--dangerously-skip-permissions')) {
+      args.push('--permission-mode', 'bypassPermissions');
     }
 
     // Reduce PTY output noise: disable animations, progress bar, tips
