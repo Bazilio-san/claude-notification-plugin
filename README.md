@@ -250,6 +250,10 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/clear &project[/branch]`     | Clear queue + reset session          |
 | `/newsession [&project[/branch]]` | Reset session only (keep queue)   |
 | `/projects`                    | List projects and paths              |
+| `/addproject <alias> <path>`   | Register a project alias             |
+| `/addproject <alias> /<basename>` | Register using basename from `/seen` |
+| `/seen`                        | Recent folders seen by notifier      |
+| `/setdefault`                  | Change the default project           |
 | `/worktrees &project`          | List worktrees                       |
 | `/worktree &project/branch`    | Create a worktree                    |
 | `/rmworktree &project/branch`  | Remove a worktree                    |
@@ -259,6 +263,35 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/start`                       | Show help with inline buttons        |
 | `/menu`                        | Show help with inline buttons        |
 | `/help`                        | Show help with inline buttons        |
+
+#### Registering projects on the fly (`/addproject` + `/seen`)
+
+Whenever the notifier fires for a folder, it records the absolute path,
+basename and timestamp in `~/.claude/claude-notify.seen.json` (last 30
+entries, oldest auto-evicted). `/seen` shows that list as a table — folders
+already registered as listener projects have their alias in the `alias`
+column; the rest show `—`.
+
+`/addproject` accepts two forms for the path argument:
+
+```
+/addproject mj D:/DEV/FA/_cur/mcp-jira   — explicit absolute path
+/addproject mj /mcp-jira                  — basename from /seen (most recent)
+```
+
+The basename form (`/name`) looks up the most recent entry in the seen file
+whose basename equals `name`. This is handy right after receiving a
+notification like `✅ /mcp-jira/master` — no need to retype the full path.
+
+Safeguards: alias must be unique, path must exist and be a directory, and
+the same path cannot be registered twice under different aliases.
+
+> **Unix note.** A single-segment path like `/mcp-jira` is always
+> interpreted as a basename reference. If you have a real `/mcp-jira`
+> directory at the filesystem root, add a trailing slash to force the
+> explicit-path interpretation: `/addproject mj /mcp-jira/`.
+
+`/add-project` and `/add_project` are accepted as aliases for `/addproject`.
 
 ### Listener configuration
 

@@ -8,6 +8,7 @@ export const PLUGINS_DIR = path.join(CLAUDE_DIR, 'plugins');
 
 // File names
 export const CONFIG_FILENAME = 'claude-notify.config.json';
+export const SEEN_PROJECTS_FILENAME = 'claude-notify.seen.json';
 export const STATE_FILENAME = '.notifier_state.json';
 export const PID_FILENAME = '.listener.pid';
 export const RESOLVER_FILENAME = 'claude-notify-resolve.js';
@@ -19,6 +20,8 @@ export const PTY_SIGNAL_DIR = path.join(CLAUDE_DIR, 'pty-signals');
 
 // Full paths
 export const CONFIG_PATH = path.join(CLAUDE_DIR, CONFIG_FILENAME);
+export const SEEN_PROJECTS_PATH = path.join(CLAUDE_DIR, SEEN_PROJECTS_FILENAME);
+export const MAX_SEEN_ENTRIES = 30;
 export const STATE_PATH = path.join(CLAUDE_DIR, STATE_FILENAME);
 export const PID_PATH = path.join(CLAUDE_DIR, PID_FILENAME);
 export const RESOLVER_PATH = path.join(CLAUDE_DIR, RESOLVER_FILENAME);
@@ -63,6 +66,79 @@ export function getDefaultProject (projects) {
  */
 export function saveConfig (config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+/**
+ * Normalize a filesystem path for equality comparison.
+ * - Resolves ".", "..", trailing slashes, mixed separators.
+ * - Uses forward slashes.
+ * - Lowercases on Windows (case-insensitive FS).
+ */
+export function normalizeForCompare (p) {
+  if (!p) {
+    return '';
+  }
+  const resolved = path.resolve(p).replace(/\\/g, '/');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Load the seen-projects file. Returns { entries: [] } on any error.
+ * Schema: { entries: [{ path, basename, lastSeen }] }
+ */
+export function loadSeenProjects () {
+  try {
+    const raw = fs.readFileSync(SEEN_PROJECTS_PATH, 'utf-8');
+    const data = JSON.parse(raw);
+    if (data && Array.isArray(data.entries)) {
+      return { entries: data.entries };
+    }
+  } catch {
+    // fall through
+  }
+  return { entries: [] };
+}
+
+/**
+ * Record a folder as "seen" by the notifier. Updates lastSeen in-place
+ * if the path already exists, otherwise appends a new entry. Sorts by
+ * lastSeen desc and trims to MAX_SEEN_ENTRIES.
+ * Silent on errors — never throws.
+ */
+export function recordSeenProject (cwd) {
+  try {
+    if (!cwd) {
+      return;
+    }
+    const normalized = normalizeForCompare(cwd);
+    const data = loadSeenProjects();
+    const entries = data.entries;
+
+    const now = new Date().toISOString();
+    const idx = entries.findIndex(
+      (e) => normalizeForCompare(e.path) === normalized
+    );
+    if (idx >= 0) {
+      entries[idx].lastSeen = now;
+      entries[idx].path = cwd.replace(/\\/g, '/');
+      entries[idx].basename = path.basename(cwd);
+    } else {
+      entries.push({
+        path: cwd.replace(/\\/g, '/'),
+        basename: path.basename(cwd),
+        lastSeen: now,
+      });
+    }
+
+    entries.sort((a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''));
+    const trimmed = entries.slice(0, MAX_SEEN_ENTRIES);
+
+    const tmp = `${SEEN_PROJECTS_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ entries: trimmed }, null, 2));
+    fs.renameSync(tmp, SEEN_PROJECTS_PATH);
+  } catch {
+    // silent: notifier must not crash on seen-file errors
+  }
 }
 
 // Plugin identity

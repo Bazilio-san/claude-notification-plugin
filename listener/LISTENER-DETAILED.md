@@ -674,6 +674,49 @@ Bot: 📂 Projects:
      &web → /home/user/projects/web-app
 ```
 
+### /addproject — register a project alias
+
+Registers a new entry in `listener.projects` without manual config editing.
+Two forms for the path argument:
+
+```
+You: /addproject mj D:/DEV/FA/_cur/mcp-jira
+Bot: ✅ Project added: &mj → D:/DEV/FA/_cur/mcp-jira
+
+You: /addproject mj /mcp-jira
+Bot: ✅ Project added: &mj → D:/DEV/FA/_cur/mcp-jira
+```
+
+The basename form (`/name`) resolves via `~/.claude/claude-notify.seen.json`,
+populated by the notifier on every hook. The listener picks the most recent
+entry whose basename equals `name`.
+
+Refuses to add when: alias is already taken, path doesn't exist, path is
+not a directory, or the same path is already registered under another
+alias (compared case-insensitively on Windows).
+
+Aliases: `/add-project`, `/add_project` work as well (Telegram's menu only
+allows `[a-z0-9_]`, so the canonical short form is `addproject`).
+
+### /seen — recent folders seen by notifier
+
+Shows the last 30 folders for which the notifier fired, as a monospace
+table. Rows already registered as listener projects display their alias;
+others show `—`.
+
+```
+You: /seen
+Bot: 📂 Recent folders (4/30):
+     1  mj      2m ago    D:/DEV/FA/_cur/mcp-jira
+     2  —       15m ago   C:/work/side-project
+     3  notify  1h ago    D:/DEV/FA/_pub/claude-notification-plugin
+     4  —       3d ago    C:/tmp/old-repo
+```
+
+The seen file (`~/.claude/claude-notify.seen.json`) is written atomically
+by the notifier on every hook event; oldest entries are evicted when the
+count exceeds 30.
+
 ### /worktrees — project worktrees
 
 ```

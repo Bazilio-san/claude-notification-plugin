@@ -11,7 +11,16 @@ import { WorkQueue } from './work-queue.js';
 import { PtyRunner } from './pty-runner.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { parseMessage, parseTarget } from './message-parser.js';
-import { CLAUDE_DIR, CONFIG_PATH, LISTENER_LOG_FILENAME, getDefaultProject, saveConfig } from '../bin/constants.js';
+import {
+  CLAUDE_DIR,
+  CONFIG_PATH,
+  LISTENER_LOG_FILENAME,
+  MAX_SEEN_ENTRIES,
+  getDefaultProject,
+  saveConfig,
+  normalizeForCompare,
+  loadSeenProjects,
+} from '../bin/constants.js';
 import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime } from './jsonl-reader.js';
 
 // ----------------------
@@ -514,6 +523,12 @@ async function handleCommand (cmd, args) {
       return handleNewSession(args);
     case '/projects':
       return handleProjects();
+    case '/add-project':
+    case '/add_project':
+    case '/addproject':
+      return handleAddProject(args);
+    case '/seen':
+      return handleSeen();
     case '/setdefault':
       return handleSetDefault(args);
     case '/worktrees':
@@ -825,6 +840,177 @@ function handleSetDefault (args) {
   return `✅ Default project: <b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(projPath)}</code>`;
 }
 
+// ----------------------
+// /add-project and /seen
+// ----------------------
+
+function isBasenameRef (s) {
+  // "/foo" — one leading slash + single path segment, no second slash,
+  // no backslash, no drive letter. Everything else → explicit path.
+  return /^\/[^/\\:]+$/.test(s);
+}
+
+function formatAge (iso) {
+  if (!iso) {
+    return '?';
+  }
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diffMs)) {
+    return '?';
+  }
+  if (diffMs < 0) {
+    return 'now';
+  }
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) {
+    return `${s}s ago`;
+  }
+  const m = Math.floor(s / 60);
+  if (m < 60) {
+    return `${m}m ago`;
+  }
+  const h = Math.floor(m / 60);
+  if (h < 24) {
+    return `${h}h ago`;
+  }
+  const d = Math.floor(h / 24);
+  if (d < 30) {
+    return `${d}d ago`;
+  }
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function handleAddProject (args) {
+  const trimmed = (args || '').trim();
+  const usage = `❌ Usage: /addproject &lt;alias&gt; &lt;path-or-/basename&gt;
+
+Examples:
+  /addproject mj D:/DEV/FA/_cur/mcp-jira   — explicit path
+  /addproject mj /mcp-jira                  — resolve from last notification
+  /addproject mj /mcp-jira/                 — Unix: literal /mcp-jira directory
+
+Aliases for this command: /add-project, /add_project`;
+
+  if (!trimmed) {
+    return usage;
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) {
+    return usage;
+  }
+  const alias = parts[0];
+  const rawTarget = parts.slice(1).join(' ');
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(alias)) {
+    return `❌ Invalid alias "<b>${escapeHtml(alias)}</b>". Allowed: letters, digits, underscore, hyphen.`;
+  }
+  if (listenerConfig.projects[alias]) {
+    return `❌ Alias "<b>${escapeHtml(alias)}</b>" already exists. Use /projects to list.`;
+  }
+
+  // Resolve target → absolute path
+  let absPath;
+  if (isBasenameRef(rawTarget)) {
+    const { entries } = loadSeenProjects();
+    const basename = rawTarget.replace(/^\/+/, '');
+    const matches = entries
+      .filter((e) => e.basename === basename)
+      .sort((a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''));
+    if (matches.length === 0) {
+      return `❌ Unknown basename "/${escapeHtml(basename)}". No notification from such folder was seen yet. Use /seen to list recent folders.`;
+    }
+    absPath = matches[0].path;
+  } else {
+    absPath = rawTarget;
+  }
+
+  // Validate directory exists
+  try {
+    if (!fs.statSync(absPath).isDirectory()) {
+      return `❌ Path is not a directory: <code>${escapeHtml(absPath)}</code>`;
+    }
+  } catch {
+    return `❌ Path does not exist: <code>${escapeHtml(absPath)}</code>`;
+  }
+
+  // Normalize to forward slashes (match existing config style)
+  absPath = absPath.replace(/\\/g, '/');
+
+  // Check: path already registered under another alias?
+  const normalizedNew = normalizeForCompare(absPath);
+  for (const [existingAlias, proj] of Object.entries(listenerConfig.projects)) {
+    const existingPath = typeof proj === 'string' ? proj : proj?.path;
+    if (!existingPath) {
+      continue;
+    }
+    if (normalizeForCompare(existingPath) === normalizedNew) {
+      return `❌ Path already registered as <b>&${escapeHtml(existingAlias)}</b> → <code>${escapeHtml(existingPath)}</code>`;
+    }
+  }
+
+  // Mutate config + persist
+  listenerConfig.projects[alias] = {
+    path: absPath,
+    claudeArgs: [],
+    worktrees: {},
+  };
+  try {
+    saveConfig(config);
+  } catch (err) {
+    delete listenerConfig.projects[alias];
+    logger.error(`Failed to save config: ${err.message}`);
+    return `❌ Failed to save config: ${escapeHtml(err.message)}`;
+  }
+
+  // Discover worktrees for the new project (consistency with startup flow)
+  try {
+    worktreeManager.discoverWorktrees(alias);
+  } catch (err) {
+    logger.warn(`discoverWorktrees failed for ${alias}: ${err.message}`);
+  }
+
+  logger.info(`Project added: ${alias} → ${absPath}`);
+  return `✅ Project added: <b>&${escapeHtml(alias)}</b> → <code>${escapeHtml(absPath)}</code>`;
+}
+
+function handleSeen () {
+  const { entries } = loadSeenProjects();
+  if (!entries || entries.length === 0) {
+    return 'ℹ No seen folders yet. Notifier will populate this list as you receive notifications.';
+  }
+
+  // Build alias index: normalized project path → alias
+  const aliasByPath = new Map();
+  for (const [alias, proj] of Object.entries(listenerConfig.projects)) {
+    const p = typeof proj === 'string' ? proj : proj?.path;
+    if (p) {
+      aliasByPath.set(normalizeForCompare(p), alias);
+    }
+  }
+
+  // Sort by lastSeen desc (defensive — notifier already does this)
+  const sorted = [...entries].sort(
+    (a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''),
+  );
+
+  const rows = sorted.map((e, i) => ({
+    num: String(i + 1),
+    alias: aliasByPath.get(normalizeForCompare(e.path)) || '—',
+    age: formatAge(e.lastSeen),
+    projPath: e.path,
+  }));
+  const wNum = Math.max(...rows.map((r) => r.num.length));
+  const wAlias = Math.max(...rows.map((r) => r.alias.length), 5);
+  const wAge = Math.max(...rows.map((r) => r.age.length), 3);
+
+  const lines = rows.map((r) => `${r.num.padStart(wNum)}  ${r.alias.padEnd(wAlias)}  ${r.age.padStart(wAge)}  ${r.projPath}`);
+
+  return {
+    text: `📂 <b>Recent folders</b> (${rows.length}/${MAX_SEEN_ENTRIES}):
+<pre>${escapeHtml(lines.join('\n'))}</pre>`,
+  };
+}
+
 function handleWorktrees (args) {
   const target = parseTarget(args);
   if (!target) {
@@ -1011,6 +1197,8 @@ function handleHelp () {
 /clear &project[/branch] — clear queue + reset session
 /newsession [&project[/branch]] — reset session (keep queue)
 /projects — list projects
+/addproject &lt;alias&gt; &lt;path-or-/basename&gt; — register a project
+/seen — recent folders seen by notifier
 /setdefault — change default project
 /worktrees &project — project worktrees
 /worktree &project/branch — create worktree
@@ -1163,6 +1351,8 @@ async function mainLoop () {
     { command: 'status', description: 'Status of all projects' },
     { command: 'queue', description: 'Show all queues' },
     { command: 'projects', description: 'List projects' },
+    { command: 'addproject', description: 'Register a project alias' },
+    { command: 'seen', description: 'Recent folders seen by notifier' },
     { command: 'setdefault', description: 'Change default project' },
     { command: 'history', description: 'Recent task history' },
     { command: 'pty', description: 'PTY session diagnostics' },

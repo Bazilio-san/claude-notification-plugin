@@ -4,7 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import process from 'process';
 import { execSync, spawn } from 'child_process';
-import { CONFIG_PATH, STATE_PATH, PTY_SIGNAL_DIR } from '../bin/constants.js';
+import {
+  CONFIG_PATH,
+  STATE_PATH,
+  PTY_SIGNAL_DIR,
+  normalizeForCompare,
+  recordSeenProject,
+} from '../bin/constants.js';
 
 // ----------------------
 // CONFIG
@@ -26,22 +32,18 @@ function debugLog (config, ...args) {
   }
 }
 
-function normalizePath (p) {
-  return path.resolve(p).replace(/\\/g, '/').toLowerCase();
-}
-
 function resolveProjectName (cwd, config) {
   const fallback = path.basename(cwd);
   const projects = config?.listenerProjects;
   if (!projects || typeof projects !== 'object') {
     return fallback;
   }
-  const normalizedCwd = normalizePath(cwd);
+  const normalizedCwd = normalizeForCompare(cwd);
   for (const entry of Object.values(projects)) {
     if (!entry?.path) {
       continue;
     }
-    if (normalizedCwd === normalizePath(entry.path) && entry.name) {
+    if (normalizedCwd === normalizeForCompare(entry.path) && entry.name) {
       return entry.name;
     }
   }
@@ -747,6 +749,10 @@ process.stdin.on('end', async () => {
   const cwd = event.cwd || process.cwd();
   const project = resolveProjectName(cwd, config);
   const sessionId = event.session_id || 'default';
+
+  // Record this cwd in the seen-projects file for /add-project /basename
+  // resolution and the /seen listener command. Silent on errors.
+  recordSeenProject(cwd);
 
   const disabled = isNotifierDisabled();
   if (disabled === true) {
