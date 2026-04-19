@@ -265,6 +265,27 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/menu`                        | Show help with inline buttons        |
 | `/help`                        | Show help with inline buttons        |
 
+#### Raw REPL commands (`%cmd`)
+
+To forward a slash-command straight into the live Claude Code REPL (instead of
+letting the listener intercept it), prefix it with `%`:
+
+| Telegram message        | What gets sent to Claude PTY                 |
+|-------------------------|----------------------------------------------|
+| `%clear`                | `/clear` in the default project              |
+| `&api %compact`         | `/compact` in the `&api` main worktree       |
+| `&api/feature %cost`    | `/cost` in the `&api/feature` worktree       |
+| `%%foo`                 | literal task starting with `%foo` (escape)   |
+
+Useful for `/clear`, `/compact`, `/cost`, `/model`, `/status` etc. — commands
+that act on the running Claude session without going through the listener's
+command router. The PTY session is **kept alive**, so subsequent tasks
+continue in the same conversation (with cleared context after `/clear`).
+
+Because REPL commands usually don't produce a `Stop` hook event, raw tasks
+complete after ~8 s of PTY inactivity; the last chunk of output is included
+in the confirmation reply.
+
 #### Registering projects on the fly (`/addproject` + `/seen`)
 
 Whenever the notifier fires for a folder, it records the absolute path,

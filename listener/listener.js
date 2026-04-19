@@ -201,6 +201,29 @@ runner.on('complete', async (workDir, task, result) => {
   // Delete the "Running" message
   await poller.deleteMessage(task.runningMessageId);
 
+  const output = result.text || '';
+
+  if (task.raw) {
+    // Raw slash-command: compact "sent" confirmation, don't bump session counter.
+    // `/clear` wipes Claude's context — reset our counters too.
+    const normalized = (task.text || '').trim().toLowerCase();
+    if (normalized === '/clear') {
+      sessions.delete(workDir);
+    }
+    const headerShort = `📨 <code>${label}</code>  sent <code>${escapeHtml(task.text)}</code>`;
+    const tail = output ? output.slice(-1500) : '';
+    const body = tail ? `\n\n<pre>${escapeHtml(tail)}</pre>` : '';
+    const sentId = await poller.sendMessage(headerShort + body, task.telegramMessageId);
+    if (!sentId && task.telegramMessageId) {
+      await poller.sendMessage(headerShort + body);
+    }
+    const next = queue.onTaskComplete(workDir, output);
+    if (next) {
+      startTask(workDir, next);
+    }
+    return;
+  }
+
   // Update session tracking
   const session = sessions.get(workDir) || { taskCount: 0 };
   session.taskCount++;
@@ -231,7 +254,6 @@ runner.on('complete', async (workDir, task, result) => {
   const sessionIcon = task.continueSession ? '🔄' : '🆕';
 
   // Build result
-  const output = result.text || '';
   const headerShort = `✅ ${sessionIcon} <code>${label}</code>${sessionInfo}`;
   const headerFull = `${headerShort}\n\n${escapeHtml(task.text)}`;
   let body = '';
@@ -428,6 +450,29 @@ async function startTask (workDir, task) {
   const label = formatLabel(entry);
   const continueSession = shouldContinueSession(workDir);
   const session = sessions.get(workDir);
+
+  // Raw slash-commands get a compact running message and skip the live console.
+  if (task.raw) {
+    const runningRaw = `📨 <code>${label}</code>  sending <code>${escapeHtml(task.text)}</code>…`;
+    let runningMsgId = null;
+    if (task.telegramMessageId) {
+      runningMsgId = await poller.sendMessage(runningRaw, task.telegramMessageId);
+    }
+    if (!runningMsgId) {
+      runningMsgId = await poller.sendMessage(runningRaw);
+    }
+    task.runningMessageId = runningMsgId;
+    const claudeArgs = getClaudeArgs(entry?.project);
+    try {
+      runner.run(workDir, task, claudeArgs, continueSession);
+      queue.markStarted(workDir, task.pid || 0);
+    } catch (err) {
+      logger.error(`Failed to start raw task: ${err.message}`);
+      poller.sendMessage(`❌  <code>${label}</code>\nFailed to start: ${escapeHtml(err.message)}`);
+      queue.onTaskComplete(workDir, `START_ERROR: ${err.message}`);
+    }
+    return;
+  }
 
   // Build running message with session info
   let sessionTag = '';
@@ -1239,6 +1284,11 @@ function handleHelp () {
 <code>&amp;project/branch task</code> — worktree
 <code>task</code> — default project
 
+<b>Raw REPL commands (forward to live Claude session):</b>
+<code>%clear</code> — send <code>/clear</code> into the running Claude PTY
+<code>&amp;project %compact</code> — same, targeting project
+<code>%%foo</code> — literal task starting with <code>%foo</code> (escape)
+
 <b>Session:</b>
 🆕 = new session, 🔄 = continuing session
 ctx N% = context window usage`,
@@ -1286,6 +1336,7 @@ async function handleTask (parsed, telegramMessageId) {
     parsed.branch || 'main',
     parsed.text,
     telegramMessageId,
+    !!parsed.raw,
   );
 
   if (result.error) {

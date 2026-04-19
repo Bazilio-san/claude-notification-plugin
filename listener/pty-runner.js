@@ -4,8 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { PTY_SIGNAL_DIR } from '../bin/constants.js';
+import { cleanPtyOutput } from './telegram-poller.js';
 
 const DEFAULT_TIMEOUT = 600_000; // 10 minutes
+// Built-in slash-commands (forwarded via %cmd) rarely emit a Stop hook event,
+// so we fall back to "done" after this much buffer inactivity.
+const RAW_INACTIVITY_MS = 8_000;
 
 /**
  * PTY-based runner for Claude Code.
@@ -318,8 +322,11 @@ export class PtyRunner extends EventEmitter {
     session._buffer = '';
     this._openPtyLog(session, task);
 
-    // Set up marker wait + inactivity timeout
-    const markerPromise = this._waitForMarker(pendingId, this.timeout, session);
+    // Set up marker wait + inactivity timeout. Raw slash-commands use a much
+    // shorter window because they typically don't trigger an agent turn and
+    // therefore never produce a Stop signal.
+    const inactivityMs = task.raw ? RAW_INACTIVITY_MS : this.timeout;
+    const markerPromise = this._waitForMarker(pendingId, inactivityMs, session);
 
     // Send the task text to the PTY.
     // Bracketed paste mode (\x1b[200~...\x1b[201~) causes Claude to hang in ConPTY,
@@ -379,6 +386,29 @@ export class PtyRunner extends EventEmitter {
       session.currentTask = null;
 
       if (err.message === 'Marker timeout') {
+        if (task.raw) {
+          // Slash commands (e.g. /clear, /cost) usually don't emit a Stop hook.
+          // Treat inactivity as successful completion and keep the PTY alive.
+          const cleaned = cleanPtyOutput(session._buffer || '').trim();
+          const tail = cleaned.length > 2000 ? cleaned.slice(-2000) : cleaned;
+          const result = {
+            text: tail,
+            sessionId: session.sessionId || null,
+            cost: 0,
+            numTurns: 0,
+            durationMs: 0,
+            contextWindow: 0,
+            totalTokens: 0,
+            isError: false,
+            raw: true,
+          };
+          this.logger.info(`PTY raw command finished (no Stop signal) in ${workDir}`);
+          if (this.taskLogger) {
+            this.taskLogger.logAnswer(task.project || 'unknown', task.branch || 'main', tail, 0);
+          }
+          this.emit('complete', workDir, task, result);
+          return;
+        }
         this.logger.warn(`PTY task timed out in ${workDir}`);
         this._destroyPty(workDir);
         this.emit('timeout', workDir, task);

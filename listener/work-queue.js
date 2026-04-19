@@ -30,7 +30,7 @@ export class WorkQueue {
    * Enqueue a task for a workDir. Returns the task object.
    * If no active task, marks it as ready to run immediately.
    */
-  enqueue (workDir, project, branch, text, telegramMessageId) {
+  enqueue (workDir, project, branch, text, telegramMessageId, raw = false) {
     if (!this.queues[workDir]) {
       this.queues[workDir] = {
         project,
@@ -57,6 +57,7 @@ export class WorkQueue {
       project,
       branch: branch || 'main',
       telegramMessageId,
+      raw: !!raw,
       addedAt: new Date().toISOString(),
     };
 

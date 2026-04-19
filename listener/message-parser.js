@@ -9,7 +9,12 @@
  *   &project text           → { type: 'task', project, branch: null, text }
  *   text                    → { type: 'task', project: <defaultProject>, branch: null, text }
  *
- * Any /word is treated as a command (known or unknown).
+ * Raw slash-commands forwarded to the live Claude REPL:
+ *   %cmd [args]             → task with raw:true, text='/cmd [args]'
+ *   &project %cmd [args]    → same, targeting the project's PTY
+ *   %%foo                   → literal task starting with "%foo" (escape)
+ *
+ * Any /word is treated as a listener command (known or unknown).
  * Project designation uses & prefix: &project or &project/branch.
  *
  * @param {string} text - The message text.
@@ -41,7 +46,8 @@ export function parseMessage (text, defaultProject) {
     const projectMatch = trimmed.match(/^&(\S+)\s+([\s\S]+)$/);
     if (projectMatch) {
       const target = projectMatch[1];
-      const taskText = projectMatch[2].trim();
+      const rawText = projectMatch[2].trim();
+      const { text: taskText, raw } = parseRawPrefix(rawText);
 
       const slashIndex = target.indexOf('/');
       if (slashIndex > 0) {
@@ -50,6 +56,7 @@ export function parseMessage (text, defaultProject) {
           project: target.substring(0, slashIndex),
           branch: target.substring(slashIndex + 1),
           text: taskText,
+          raw,
         };
       }
       return {
@@ -57,17 +64,36 @@ export function parseMessage (text, defaultProject) {
         project: target,
         branch: null,
         text: taskText,
+        raw,
       };
     }
   }
 
   // Plain text → default project
+  const { text: taskText, raw } = parseRawPrefix(trimmed);
   return {
     type: 'task',
     project: defaultProject || 'default',
     branch: null,
-    text: trimmed,
+    text: taskText,
+    raw,
   };
+}
+
+/**
+ * Detect `%cmd` / `%%literal` prefix.
+ * - `%%foo`  → plain task "%foo"
+ * - `%foo`   → raw task "/foo" (forwarded to PTY verbatim)
+ * - anything else → unchanged plain task
+ */
+function parseRawPrefix (text) {
+  if (text.startsWith('%%')) {
+    return { text: text.slice(1), raw: false };
+  }
+  if (text.startsWith('%')) {
+    return { text: '/' + text.slice(1), raw: true };
+  }
+  return { text, raw: false };
 }
 
 /**
