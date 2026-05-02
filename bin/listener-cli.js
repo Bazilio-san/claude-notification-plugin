@@ -31,6 +31,7 @@ function getLogFile () {
     return path.join(CLAUDE_DIR, LISTENER_LOG_FILENAME);
   }
 }
+
 const LISTENER_SCRIPT = path.join(__dirname, '..', 'listener', 'listener.js');
 
 const command = process.argv[2];
@@ -69,15 +70,20 @@ Commands:
 }
 
 async function startDaemon () {
-  // Check if already running
+  // Replace any prior instance — both stale PID-files and live processes.
+  // Telegram allows exactly one getUpdates consumer per token, so a zombie
+  // listener (terminal closed, taskkill failed mid-stop, etc.) holds the
+  // long-poll slot and blocks the new one with 409 Conflict. Active SIGTERM
+  // makes `start` idempotent: user typed `start` → listener is running.
   const existingPid = readPid();
-  if (existingPid && isProcessAlive(existingPid)) {
-    console.log(`Listener is already running (PID: ${existingPid})`);
-    process.exit(1);
-  }
-
-  // Clean stale PID file
   if (existingPid) {
+    if (isProcessAlive(existingPid)) {
+      console.log(`Replacing prior listener (PID: ${existingPid})...`);
+      if (!terminatePid(existingPid)) {
+        console.error(`Failed to stop prior listener (PID: ${existingPid}). Exiting.`);
+        process.exit(1);
+      }
+    }
     try {
       fs.unlinkSync(PID_PATH);
     } catch {
@@ -167,7 +173,20 @@ function stopDaemon () {
   }
 
   console.log(`Stopping listener (PID: ${pid})...`);
+  if (terminatePid(pid)) {
+    cleanPid();
+    console.log('Listener stopped');
+  } else {
+    console.error(`Failed to stop listener (PID: ${pid})`);
+  }
+}
 
+/**
+ * Best-effort process termination. Returns true if the target is gone after
+ * the call, false otherwise. Used both by `stop` and by `start` (to evict a
+ * stale prior instance holding the Telegram long-poll slot).
+ */
+function terminatePid (pid) {
   try {
     if (process.platform === 'win32') {
       execSync(`taskkill /PID ${pid} /T /F`, {
@@ -176,7 +195,6 @@ function stopDaemon () {
       });
     } else {
       process.kill(pid, 'SIGTERM');
-      // Wait for graceful shutdown
       let tries = 10;
       while (tries-- > 0 && isProcessAlive(pid)) {
         execSync('sleep 0.5', { stdio: 'ignore' });
@@ -186,11 +204,9 @@ function stopDaemon () {
       }
     }
   } catch {
-    // Process may already be dead
+    // Already dead, or no permission — fall through to the alive check.
   }
-
-  cleanPid();
-  console.log('Listener stopped');
+  return !isProcessAlive(pid);
 }
 
 async function showStatus () {

@@ -2,6 +2,10 @@
 
 const POLL_TIMEOUT = 30; // seconds
 const MAX_MESSAGE_LENGTH = 4096;
+// Telegram allows exactly one getUpdates consumer per token. If we keep seeing
+// 409 it means another instance is polling — exit so the user notices instead
+// of looping silently.
+const MAX_CONSECUTIVE_409 = 8;
 
 export class TelegramPoller {
   constructor (token, chatId, logger) {
@@ -12,6 +16,7 @@ export class TelegramPoller {
     this.offset = 0;
     this._errorBackoff = 0; // current backoff in ms (0 = no backoff)
     this._consecutiveErrors = 0;
+    this._consecutive409 = 0;
   }
 
   async flush () {
@@ -38,7 +43,23 @@ export class TelegramPoller {
       const res = await fetch(url, { signal: AbortSignal.timeout((POLL_TIMEOUT + 10) * 1000) });
       const data = await res.json();
       if (!data.ok) {
-        this.logger.error(`getUpdates failed: ${JSON.stringify(data)}`);
+        if (data.error_code === 409) {
+          this._consecutive409++;
+          if (this._consecutive409 >= MAX_CONSECUTIVE_409) {
+            this.logger.error(
+              `409 Conflict persists after ${this._consecutive409} attempts — `
+              + 'another listener is holding the bot token. Exiting.',
+            );
+            console.error(
+              `409 Conflict persists after ${this._consecutive409} attempts — `
+              + 'another listener (or stray getUpdates consumer) is holding the bot token. Exiting.',
+            );
+            process.exit(2);
+          }
+          this.logger.warn(`getUpdates 409 Conflict (attempt ${this._consecutive409}/${MAX_CONSECUTIVE_409})`);
+        } else {
+          this.logger.error(`getUpdates failed: ${JSON.stringify(data)}`);
+        }
         this._applyBackoff();
         return [];
       }
@@ -47,6 +68,7 @@ export class TelegramPoller {
         this.logger.info('getUpdates recovered after errors');
       }
       this._consecutiveErrors = 0;
+      this._consecutive409 = 0;
       this._errorBackoff = 0;
 
       const messages = [];
@@ -268,7 +290,9 @@ function splitMessage (text) {
     return [`${head}\n\n<i>... (truncated ${text.length} chars) ...</i>\n\n${tail}`];
   }
 
-  // Split into chunks preserving line boundaries
+  // Split into chunks with tiered preference: paragraph → line → space → hard.
+  // Each tier is accepted only if it falls past the midpoint, otherwise
+  // we'd produce a tiny chunk followed by a huge one.
   const chunks = [];
   let remaining = text;
   while (remaining.length > 0) {
@@ -276,12 +300,22 @@ function splitMessage (text) {
       chunks.push(remaining);
       break;
     }
-    let splitAt = remaining.lastIndexOf('\n', MAX_MESSAGE_LENGTH);
-    if (splitAt <= 0) {
+    const para = remaining.lastIndexOf('\n\n', MAX_MESSAGE_LENGTH);
+    const line = remaining.lastIndexOf('\n', MAX_MESSAGE_LENGTH);
+    const space = remaining.lastIndexOf(' ', MAX_MESSAGE_LENGTH);
+    const half = MAX_MESSAGE_LENGTH / 2;
+    let splitAt;
+    if (para > half) {
+      splitAt = para;
+    } else if (line > half) {
+      splitAt = line;
+    } else if (space > 0) {
+      splitAt = space;
+    } else {
       splitAt = MAX_MESSAGE_LENGTH;
     }
     chunks.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt + 1);
+    remaining = remaining.slice(splitAt).replace(/^\n+/, '');
   }
   return chunks;
 }

@@ -263,12 +263,21 @@ export class WorkQueue {
   }
 
   _load () {
+    if (!fs.existsSync(QUEUE_FILE)) {
+      return;
+    }
     try {
-      if (fs.existsSync(QUEUE_FILE)) {
-        this.queues = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf-8'));
-      }
+      this.queues = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf-8'));
     } catch (err) {
-      this.logger.error(`Failed to load queue file: ${err.message}`);
+      // Move aside corrupt file (truncated by crash mid-write, ENOSPC, etc.)
+      // so the next start succeeds instead of looping on a parse error.
+      const corrupt = `${QUEUE_FILE}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(QUEUE_FILE, corrupt);
+        this.logger.error(`Queue file corrupt, moved to ${corrupt}: ${err.message}`);
+      } catch (renameErr) {
+        this.logger.error(`Queue file corrupt and rename failed: ${err.message} / ${renameErr.message}`);
+      }
       this.queues = {};
     }
   }
@@ -277,7 +286,11 @@ export class WorkQueue {
     try {
       const dir = path.dirname(QUEUE_FILE);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(QUEUE_FILE, JSON.stringify(this.queues, null, 2));
+      // Atomic write: tmp + rename. Crash mid-write leaves the tmp orphan,
+      // not a half-written QUEUE_FILE.
+      const tmp = `${QUEUE_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(this.queues, null, 2));
+      fs.renameSync(tmp, QUEUE_FILE);
     } catch (err) {
       this.logger.error(`Failed to save queue file: ${err.message}`);
     }
@@ -290,20 +303,29 @@ export class WorkQueue {
       history.shift();
     }
     try {
-      fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+      const tmp = `${HISTORY_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(history, null, 2));
+      fs.renameSync(tmp, HISTORY_FILE);
     } catch {
       // ignore
     }
   }
 
   _loadHistory () {
-    try {
-      if (fs.existsSync(HISTORY_FILE)) {
-        return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
-      }
-    } catch {
-      // ignore
+    if (!fs.existsSync(HISTORY_FILE)) {
+      return [];
     }
-    return [];
+    try {
+      return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
+    } catch (err) {
+      const corrupt = `${HISTORY_FILE}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(HISTORY_FILE, corrupt);
+        this.logger.error(`History file corrupt, moved to ${corrupt}: ${err.message}`);
+      } catch {
+        // ignore
+      }
+      return [];
+    }
   }
 }
