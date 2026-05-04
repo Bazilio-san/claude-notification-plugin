@@ -218,8 +218,10 @@ async function runWatchdog () {
   }
 }
 
-// 1. Initial watchdog sweep on startup
-runWatchdog();
+// 1. Initial watchdog sweep on startup. Must finish before orphan recovery,
+// otherwise orphan recovery sees the stale active (still set) and re-spawns
+// the killed task while watchdog is still awaiting its Telegram notify.
+await runWatchdog();
 
 // 2. Re-start orphaned active tasks (PTY sessions lost on restart)
 for (const [workDir, entry] of Object.entries(queue.queues)) {
