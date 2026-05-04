@@ -88,6 +88,10 @@ When the user says "опубликуй", "опубликуй проект", or "
 
 E2E testing of Telegram bot interactions — use skill `/test-telegram`.
 
+## Debugging a stuck Listener
+
+When the user reports the listener/bot is hanging (e.g. "процесс завис", "бот не отвечает", "no response from listener") — use skill `/listener-debug`. It covers diagnosis (state files, logs, PTY signals), recovery escalation (cancel → clear → restart), and the fix-publish-reinstall cycle for code-level bugs.
+
 ## Dev/Test Cycle (listener changes)
 
 When making changes to listener or notification code:
