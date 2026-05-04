@@ -172,13 +172,54 @@ for (const alias of Object.keys(listenerConfig.projects)) {
 // WATCHDOG + ORPHAN RECOVERY
 // ----------------------
 
-// 1. Clean up tasks that exceeded taskTimeout
-const recovered = queue.watchdog(taskTimeout);
-for (const { workDir, next } of recovered) {
-  if (next) {
-    startTask(workDir, next);
+// Wall-clock watchdog: kills PTY sessions whose active task exceeded taskTimeout
+// since startedAt. Complements the inactivity-based marker timeout in pty-runner —
+// catches the case where Claude keeps emitting bytes (update checks, spinners)
+// but never produces a Stop hook signal, so inactivity never accumulates.
+async function runWatchdog () {
+  for (const [workDir, entry] of Object.entries(queue.queues)) {
+    if (!entry.active) {
+      continue;
+    }
+    const startedAt = entry.active.startedAt ? new Date(entry.active.startedAt).getTime() : 0;
+    if (startedAt <= 0 || (Date.now() - startedAt) <= taskTimeout) {
+      continue;
+    }
+    const task = entry.active;
+    const label = formatLabel(entry);
+    const elapsedMin = Math.round((Date.now() - startedAt) / 60000);
+    const timeoutMin = Math.round(taskTimeout / 60000);
+    logger.warn(`Watchdog: stale task "${task.id}" in ${workDir} (${elapsedMin}min) — killing PTY`);
+    if (runner.isRunning(workDir)) {
+      try {
+        runner.cancel(workDir);
+      } catch (err) {
+        logger.error(`Watchdog: cancel PTY failed in ${workDir}: ${err.message}`);
+      }
+    }
+    stopLiveConsole(workDir);
+    runner.cleanActivitySignal(workDir);
+    try {
+      if (task.runningMessageId) {
+        await poller.deleteMessage(task.runningMessageId);
+      }
+      const header = `⏰ <code>${label}</code>\nTask forcefully stopped — exceeded ${timeoutMin} min wall-clock limit`;
+      const sentId = await poller.sendMessage(header, task.telegramMessageId);
+      if (!sentId && task.telegramMessageId) {
+        await poller.sendMessage(`${header}: ${escapeHtml(task.text)}`);
+      }
+    } catch (err) {
+      logger.error(`Watchdog: notify failed: ${err.message}`);
+    }
+    const next = queue.onTaskComplete(workDir, 'STALE (watchdog cleanup)');
+    if (next) {
+      startTask(workDir, next);
+    }
   }
 }
+
+// 1. Initial watchdog sweep on startup
+runWatchdog();
 
 // 2. Re-start orphaned active tasks (PTY sessions lost on restart)
 for (const [workDir, entry] of Object.entries(queue.queues)) {
@@ -187,6 +228,9 @@ for (const [workDir, entry] of Object.entries(queue.queues)) {
     startTask(workDir, entry.active);
   }
 }
+
+// 3. Periodic watchdog — wall-clock check every minute
+setInterval(runWatchdog, 60_000);
 
 // ----------------------
 // TASK RUNNER EVENTS
