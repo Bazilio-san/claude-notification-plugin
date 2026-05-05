@@ -1321,7 +1321,7 @@ PTY log: <code>${info.hasLogStream ? 'writing' : 'off'}</code>
 async function handleSessions (args) {
   let target = parseTarget(args);
   if (!target) {
-    const def = getDefaultProject(config);
+    const def = getDefaultProject(listenerConfig.projects);
     if (!def) {
       return 'Usage: /sessions &project[/branch]';
     }
