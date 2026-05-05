@@ -90,6 +90,9 @@ Config file: `~/.claude/claude-notify.config.json`
       }
     },
     "continueSession": true,
+    "resumeLastSession": true,
+    "sessionsListLimit": 5,
+    "sessionWorkingThresholdSec": 2,
     "worktreeBaseDir": "abs-path-to-worktrees-root",
     "autoCreateWorktree": true,
     "taskTimeoutMinutes": 30,
@@ -259,6 +262,9 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/worktree &project/branch`    | Create a worktree                    |
 | `/rmworktree &project/branch`  | Remove a worktree                    |
 | `/pty [&project[/branch]]`     | PTY session diagnostics (state, buffer, output) |
+| `/sessions [&project[/branch]]` | List recent CC sessions in the project's `~/.claude/projects/<dir>/`, with status (free / alive idle / working) and a Resume / Kill & Resume button per row |
+| `/resume &project[/branch] <sessionId>` | Mark the next task to resume `<sessionId>` (`claude --resume <id>`) |
+| `/kresume &project[/branch] <sessionId>` | Same, but kill the process holding the JSONL first |
 | `/history`                     | Recent task history                  |
 | `/stop`                        | Stop the listener                    |
 | `/start`                       | Show help with inline buttons        |
@@ -321,7 +327,10 @@ the same path cannot be registered twice under different aliases.
 |----------------------|-----------------------|----------------------------------------------------------------------------------------|
 | `projects`           | (required)            | Map of projects: `alias → { path }`                                                    |
 | `claudeArgs`         | `[]`                  | Extra CLI args for Claude (e.g. `["--permission-mode", "auto"]`)                       |
-| `continueSession`    | `true`                | Continue previous session context (`--continue` flag). Claude remembers previous tasks |
+| `continueSession`    | `true`                | Keep the PTY alive between Telegram tasks so subsequent tasks reuse the same live Claude session |
+| `resumeLastSession`  | `true`                | When spawning a fresh PTY, add `--continue` so Claude picks up the most recent JSONL in the workDir (bridges laptop CC session ↔ Telegram listener) |
+| `sessionsListLimit`  | `5`                   | How many most-recent sessions `/sessions` shows                                        |
+| `sessionWorkingThresholdSec` | `2`           | A locked JSONL with mtime ≤ this many seconds is considered actively writing (status `working`, resume disabled) |
 | `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored                                                |
 | `autoCreateWorktree` | `true`                | Auto-create worktrees for unknown branches                                             |
 | `taskTimeoutMinutes` | `30`                  | Max task execution time (force-stopped when exceeded)                                  |

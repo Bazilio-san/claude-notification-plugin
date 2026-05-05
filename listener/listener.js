@@ -22,7 +22,9 @@ import {
   normalizeForCompare,
   loadSeenProjects,
 } from '../bin/constants.js';
-import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime } from './jsonl-reader.js';
+import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime, cwdToProjectDir } from './jsonl-reader.js';
+import { listSessions } from './session-list.js';
+import { findLocking, killPid } from './file-locks.js';
 
 // ----------------------
 // CRASH PROTECTION
@@ -122,6 +124,9 @@ const globalClaudeArgs = listenerConfig.claudeArgs || [];
 const continueSessionEnabled = listenerConfig.continueSession !== false; // default: true
 const taskTimeoutMinutes = listenerConfig.taskTimeoutMinutes || 30;
 const taskTimeout = taskTimeoutMinutes * 60_000;
+const resumeLastSessionEnabled = listenerConfig.resumeLastSession !== false; // default: true
+const sessionsListLimit = listenerConfig.sessionsListLimit || 5;
+const sessionWorkingThresholdSec = listenerConfig.sessionWorkingThresholdSec || 2;
 
 const poller = new TelegramPoller(token, chatId, logger);
 const queue = new WorkQueue(
@@ -147,6 +152,9 @@ const startTime = Date.now();
 const sessions = new Map();
 // WorkDirs that should start a fresh session on next task
 const freshSessionDirs = new Set();
+// WorkDirs with a pending resume request: workDir -> sessionId. Consumed by
+// applyResumeArgs() on the next task, then cleared.
+const pendingResumeBySid = new Map();
 // Live console intervals per workDir
 const liveConsoleTimers = new Map();
 // JSONL readers per workDir (for live console from structured session data)
@@ -395,6 +403,52 @@ function getClaudeArgs (projectAlias) {
   return projectArgs.length > 0 ? projectArgs : globalClaudeArgs;
 }
 
+function hasAnyJsonl (workDir) {
+  const dirName = cwdToProjectDir(workDir);
+  const dirPath = path.join(CLAUDE_DIR, 'projects', dirName);
+  try {
+    return fs.readdirSync(dirPath).some(f => f.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+}
+
+// Decide whether to add --continue or --resume <id> to claudeArgs for a fresh PTY.
+// A pending /resume <sid> wins over the global resumeLastSession default.
+// If args already contain a resume flag, leave them alone. If reusing an idle
+// PTY, claudeArgs are ignored anyway.
+function applyResumeArgs (claudeArgs, workDir) {
+  if (claudeArgs.includes('--continue') || claudeArgs.includes('--resume')) {
+    return claudeArgs;
+  }
+  if (pendingResumeBySid.has(workDir)) {
+    const sid = pendingResumeBySid.get(workDir);
+    pendingResumeBySid.delete(workDir);
+    return [...claudeArgs, '--resume', sid];
+  }
+  if (resumeLastSessionEnabled && hasAnyJsonl(workDir)) {
+    return [...claudeArgs, '--continue'];
+  }
+  return claudeArgs;
+}
+
+function formatTimeAgo (ms) {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  if (sec < 60) {
+    return `${sec}s ago`;
+  }
+  const min = Math.floor(sec / 60);
+  if (min < 60) {
+    return `${min}m ago`;
+  }
+  const h = Math.floor(min / 60);
+  if (h < 24) {
+    return `${h}h ago`;
+  }
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 function shouldContinueSession (workDir) {
   if (!continueSessionEnabled) {
     return false;
@@ -508,7 +562,7 @@ async function startTask (workDir, task) {
       runningMsgId = await poller.sendMessage(runningRaw);
     }
     task.runningMessageId = runningMsgId;
-    const claudeArgs = getClaudeArgs(entry?.project);
+    const claudeArgs = applyResumeArgs(getClaudeArgs(entry?.project), workDir);
     try {
       runner.run(workDir, task, claudeArgs, continueSession);
       queue.markStarted(workDir, task.pid || 0);
@@ -545,7 +599,7 @@ async function startTask (workDir, task) {
 
   task.runningMessageId = runningMsgId;
   startLiveConsole(workDir, runningMsgId, runningFull);
-  const claudeArgs = getClaudeArgs(entry?.project);
+  const claudeArgs = applyResumeArgs(getClaudeArgs(entry?.project), workDir);
   try {
     runner.run(workDir, task, claudeArgs, continueSession);
     queue.markStarted(workDir, task.pid || 0);
@@ -633,6 +687,12 @@ async function handleCommand (cmd, args) {
       return handleHistory();
     case '/pty':
       return handlePty(args);
+    case '/sessions':
+      return handleSessions(args);
+    case '/resume':
+      return handleResumeSession(args, false);
+    case '/kresume':
+      return handleResumeSession(args, true);
     case '/stop':
       return handleStop();
     case '/help':
@@ -1258,6 +1318,144 @@ PTY log: <code>${info.hasLogStream ? 'writing' : 'off'}</code>
 <pre>${escapeHtml(lastLines)}</pre>`;
 }
 
+async function handleSessions (args) {
+  let target = parseTarget(args);
+  if (!target) {
+    const def = getDefaultProject(config);
+    if (!def) {
+      return 'Usage: /sessions &project[/branch]';
+    }
+    target = { project: def, branch: null };
+  }
+  let workDir;
+  try {
+    workDir = worktreeManager.resolveWorkDir(target.project, target.branch);
+  } catch (err) {
+    return `❌ ${escapeHtml(err.message)}`;
+  }
+  const labelTarget = target.branch && target.branch !== 'main' && target.branch !== 'master'
+    ? `&${target.project}/${target.branch}`
+    : `&${target.project}`;
+
+  const items = await listSessions(workDir, {
+    limit: sessionsListLimit,
+    workingThresholdSec: sessionWorkingThresholdSec,
+    logger,
+  });
+  if (items.length === 0) {
+    return `📋 No sessions found for ${escapeHtml(labelTarget)}`;
+  }
+
+  let text = `📋 <b>Sessions for ${escapeHtml(labelTarget)}</b> (${items.length} most recent)`;
+  const buttons = [];
+  let idx = 0;
+  for (const s of items) {
+    idx++;
+    const ago = formatTimeAgo(Date.now() - s.mtime);
+    const sizeKb = s.size / 1024;
+    const sizeStr = sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${Math.round(sizeKb)} KB`;
+    let icon;
+    let statusLabel;
+    if (s.status === 'working') {
+      icon = '🔴';
+      statusLabel = 'working';
+    } else if (s.status === 'idle') {
+      icon = '🟡';
+      statusLabel = 'alive idle';
+    } else {
+      icon = '🟢';
+      statusLabel = 'free';
+    }
+    const lockInfo = s.lockedBy.length > 0 ? ` · pid ${s.lockedBy.join(',')}` : '';
+    const preview = s.preview ? escapeHtml(s.preview) : '<i>(no user message yet)</i>';
+    text += `\n\n<b>${idx}.</b> ${icon} ${statusLabel} · ${ago} · ${sizeStr}${lockInfo}\n<code>${s.sessionId}</code>\n${preview}`;
+
+    if (s.status === 'working') {
+      // Skip — resuming a file being actively written would corrupt JSONL.
+    } else if (s.status === 'idle') {
+      buttons.push([
+        { text: `${idx}. ⚠️ Kill & Resume`, callback_data: `/kresume ${labelTarget} ${s.sessionId}` },
+      ]);
+    } else {
+      buttons.push([
+        { text: `${idx}. ▶ Resume`, callback_data: `/resume ${labelTarget} ${s.sessionId}` },
+      ]);
+    }
+  }
+
+  if (buttons.length === 0) {
+    return text + '\n\n<i>All sessions are actively in use — cannot resume safely.</i>';
+  }
+  return { text, replyMarkup: { inline_keyboard: buttons } };
+}
+
+async function handleResumeSession (args, kill) {
+  const tokens = (args || '').trim().split(/\s+/).filter(Boolean);
+  const cmdName = kill ? '/kresume' : '/resume';
+  if (tokens.length < 2) {
+    return `Usage: ${cmdName} &project[/branch] &lt;sessionId&gt;`;
+  }
+  const target = parseTarget(tokens[0]);
+  if (!target) {
+    return `Invalid project alias: ${escapeHtml(tokens[0])}`;
+  }
+  const sessionId = tokens[1];
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+    return `Invalid session ID: <code>${escapeHtml(sessionId)}</code>`;
+  }
+
+  let workDir;
+  try {
+    workDir = worktreeManager.resolveWorkDir(target.project, target.branch);
+  } catch (err) {
+    return `❌ ${escapeHtml(err.message)}`;
+  }
+  const labelTarget = target.branch && target.branch !== 'main' && target.branch !== 'master'
+    ? `&${target.project}/${target.branch}`
+    : `&${target.project}`;
+
+  const dirName = cwdToProjectDir(workDir);
+  const filePath = path.join(CLAUDE_DIR, 'projects', dirName, `${sessionId}.jsonl`);
+  if (!fs.existsSync(filePath)) {
+    return `Session not found: <code>${escapeHtml(sessionId)}</code>`;
+  }
+
+  let killReport = '';
+  if (kill) {
+    const lockMap = await findLocking([filePath], logger);
+    const pids = lockMap.get(filePath) || [];
+    if (pids.length === 0) {
+      killReport = '\n<i>No active locker found — proceeding with resume.</i>';
+    } else {
+      let killed = 0;
+      for (const pid of pids) {
+        if (await killPid(pid, logger)) {
+          killed++;
+        }
+      }
+      logger.info(`/kresume: killed ${killed}/${pids.length} processes locking ${sessionId}: ${pids.join(',')}`);
+      // Brief settle delay so the OS releases the file handle.
+      await new Promise((r) => setTimeout(r, 500));
+      killReport = `\n<i>Killed ${killed}/${pids.length} process(es): ${pids.join(', ')}</i>`;
+    }
+  }
+
+  // Drop any live PTY in this workDir so the next task spawns a fresh one with --resume.
+  if (runner.isPtyAlive(workDir)) {
+    try {
+      runner.cancel(workDir);
+    } catch (err) {
+      logger.warn(`/resume: cancel PTY failed: ${err.message}`);
+    }
+    stopLiveConsole(workDir);
+    runner.cleanActivitySignal(workDir);
+  }
+  freshSessionDirs.add(workDir);
+  pendingResumeBySid.set(workDir, sessionId);
+
+  return `🔄 ${escapeHtml(labelTarget)}: next task will resume <code>${sessionId.slice(0, 8)}…</code>${killReport}\n\nSend the task as usual:\n<code>${escapeHtml(labelTarget)} your task here</code>`;
+}
+
 function handleHistory () {
   const history = queue.getHistory(10);
   if (history.length === 0) {
@@ -1292,6 +1490,9 @@ const MENU_KEYBOARD = {
     [
       { text: '📜 History', callback_data: '/history' },
       { text: '🖥 PTY', callback_data: '/pty' },
+      { text: '📋 Sessions', callback_data: '/sessions' },
+    ],
+    [
       { text: '🏠 Default', callback_data: '/setdefault' },
     ],
     [
@@ -1320,6 +1521,9 @@ function handleHelp () {
 /worktree &project/branch — create worktree
 /rmworktree &project/branch — remove worktree
 /pty [&project[/branch]] — PTY session diagnostics
+/sessions [&project[/branch]] — list 5 most recent CC sessions with resume buttons
+/resume &project[/branch] &lt;sessionId&gt; — next task resumes the given session
+/kresume &project[/branch] &lt;sessionId&gt; — kill the holder, then resume
 /history — task history
 /stop — stop listener
 /menu — command buttons
@@ -1478,6 +1682,7 @@ async function mainLoop () {
     { command: 'setdefault', description: 'Change default project' },
     { command: 'history', description: 'Recent task history' },
     { command: 'pty', description: 'PTY session diagnostics' },
+    { command: 'sessions', description: 'List recent CC sessions' },
     { command: 'help', description: 'Show all commands' },
     { command: 'stop', description: 'Stop listener' },
   ]);

@@ -633,6 +633,14 @@ export class PtyRunner extends EventEmitter {
   }
 
   /**
+   * Check if a PTY session exists for a workDir (busy or idle).
+   * Used to decide whether to kill before spawning a fresh session for --resume.
+   */
+  isPtyAlive (workDir) {
+    return this.sessions.has(workDir);
+  }
+
+  /**
    * Get active task info for a workDir.
    */
   getActive (workDir) {
