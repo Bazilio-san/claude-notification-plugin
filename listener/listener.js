@@ -380,9 +380,8 @@ function hasAnyJsonl (workDir) {
 }
 
 // Decide whether to add --continue or --resume <id> to claudeArgs for a fresh PTY.
-// A pending /resume <sid> wins over the global resumeLastSession default.
-// If args already contain a resume flag, leave them alone. If reusing an idle
-// PTY, claudeArgs are ignored anyway.
+// Priority: explicit caller flag > pending /resume <sid> > /newsession opt-out >
+// global resumeLastSession default. If reusing an idle PTY, claudeArgs are ignored anyway.
 function applyResumeArgs (claudeArgs, workDir) {
   if (claudeArgs.includes('--continue') || claudeArgs.includes('--resume')) {
     return claudeArgs;
@@ -391,6 +390,12 @@ function applyResumeArgs (claudeArgs, workDir) {
     const sid = pendingResumeBySid.get(workDir);
     pendingResumeBySid.delete(workDir);
     return [...claudeArgs, '--resume', sid];
+  }
+  // /newsession or /clear sets freshSessionDirs to opt out of auto-continue
+  // for this one task (consumed here so subsequent tasks resume normally).
+  if (freshSessionDirs.has(workDir)) {
+    freshSessionDirs.delete(workDir);
+    return claudeArgs;
   }
   if (resumeLastSessionEnabled && hasAnyJsonl(workDir)) {
     return [...claudeArgs, '--continue'];
@@ -415,12 +420,14 @@ function formatTimeAgo (ms) {
   return `${d}d ago`;
 }
 
+// Reuse the in-memory PTY session only if one exists and the user hasn't asked
+// for a fresh start. The freshSessionDirs flag is read here and *consumed* by
+// applyResumeArgs (which also needs it to suppress --continue).
 function shouldContinueSession (workDir) {
   if (!continueSessionEnabled) {
     return false;
   }
   if (freshSessionDirs.has(workDir)) {
-    freshSessionDirs.delete(workDir);
     return false;
   }
   return sessions.has(workDir);
