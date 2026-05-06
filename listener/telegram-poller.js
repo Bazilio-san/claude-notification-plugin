@@ -126,48 +126,53 @@ export class TelegramPoller {
     const chunks = splitMessage(text);
     let firstMessageId = null;
     for (const chunk of chunks) {
-      try {
-        const body = {
-          chat_id: this.chatId,
-          text: chunk,
-          parse_mode: 'HTML',
-        };
-        if (replyToMessageId) {
-          body.reply_to_message_id = replyToMessageId;
-        }
-        // Attach inline keyboard only to the last chunk
-        if (replyMarkup && chunk === chunks[chunks.length - 1]) {
-          body.reply_markup = replyMarkup;
-        }
-        const res = await fetch(`${this.baseUrl}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!data.ok) {
-          // Retry without HTML parse mode
-          const res2 = await fetch(`${this.baseUrl}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: this.chatId,
-              text: chunk,
-              ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
-            }),
-          });
-          const data2 = await res2.json();
-          if (data2.ok && !firstMessageId) {
-            firstMessageId = data2.result.message_id;
-          }
-        } else if (!firstMessageId) {
-          firstMessageId = data.result.message_id;
-        }
-      } catch (err) {
-        this.logger.error(`sendMessage error: ${err.message}`);
+      const isLast = chunk === chunks[chunks.length - 1];
+      const id = await this._sendChunk(chunk, replyToMessageId, replyMarkup && isLast);
+      if (id && !firstMessageId) {
+        firstMessageId = id;
       }
     }
     return firstMessageId;
+  }
+
+  // Send one chunk. Tries HTML first; on failure (e.g. malformed entities), retries
+  // as plain text. Returns Telegram messageId on success, null on hard failure.
+  async _sendChunk (text, replyToMessageId, replyMarkup) {
+    const base = { chat_id: this.chatId, text };
+    if (replyToMessageId) {
+      base.reply_to_message_id = replyToMessageId;
+    }
+    if (replyMarkup) {
+      base.reply_markup = replyMarkup;
+    }
+    try {
+      let res = await fetch(`${this.baseUrl}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...base, parse_mode: 'HTML' }),
+      });
+      let data = await res.json();
+      if (data.ok) {
+        return data.result.message_id;
+      }
+      const htmlErr = data.description || `error_code ${data.error_code}`;
+      // Retry without HTML parse mode (covers entity-parsing errors)
+      res = await fetch(`${this.baseUrl}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(base),
+      });
+      data = await res.json();
+      if (data.ok) {
+        this.logger.warn(`sendMessage: HTML failed (${htmlErr}), plain succeeded`);
+        return data.result.message_id;
+      }
+      this.logger.error(`sendMessage failed: HTML=${htmlErr}, plain=${data.description || data.error_code}`);
+      return null;
+    } catch (err) {
+      this.logger.error(`sendMessage error: ${err.message}`);
+      return null;
+    }
   }
 
   async answerCallbackQuery (callbackQueryId, text) {

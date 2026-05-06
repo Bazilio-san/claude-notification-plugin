@@ -185,6 +185,7 @@ for (const alias of Object.keys(listenerConfig.projects)) {
 // catches the case where Claude keeps emitting bytes (update checks, spinners)
 // but never produces a Stop hook signal, so inactivity never accumulates.
 async function runWatchdog () {
+  const timeoutMin = Math.round(taskTimeout / 60000);
   for (const [workDir, entry] of Object.entries(queue.queues)) {
     if (!entry.active) {
       continue;
@@ -194,9 +195,7 @@ async function runWatchdog () {
       continue;
     }
     const task = entry.active;
-    const label = formatLabel(entry);
     const elapsedMin = Math.round((Date.now() - startedAt) / 60000);
-    const timeoutMin = Math.round(taskTimeout / 60000);
     logger.warn(`Watchdog: stale task "${task.id}" in ${workDir} (${elapsedMin}min) — killing PTY`);
     if (runner.isRunning(workDir)) {
       try {
@@ -205,24 +204,10 @@ async function runWatchdog () {
         logger.error(`Watchdog: cancel PTY failed in ${workDir}: ${err.message}`);
       }
     }
-    stopLiveConsole(workDir);
-    runner.cleanActivitySignal(workDir);
-    try {
-      if (task.runningMessageId) {
-        await poller.deleteMessage(task.runningMessageId);
-      }
-      const header = `⏰ <code>${label}</code>\nTask forcefully stopped — exceeded ${timeoutMin} min wall-clock limit`;
-      const sentId = await poller.sendMessage(header, task.telegramMessageId);
-      if (!sentId && task.telegramMessageId) {
-        await poller.sendMessage(`${header}: ${escapeHtml(task.text)}`);
-      }
-    } catch (err) {
-      logger.error(`Watchdog: notify failed: ${err.message}`);
-    }
-    const next = queue.onTaskComplete(workDir, 'STALE (watchdog cleanup)');
-    if (next) {
-      startTask(workDir, next);
-    }
+    await notifyTaskCompletion(workDir, task, 'timeout', {
+      timeoutMin,
+      reason: `exceeded ${timeoutMin} min wall-clock limit`,
+    });
   }
 }
 
@@ -246,154 +231,135 @@ setInterval(runWatchdog, 60_000);
 // TASK RUNNER EVENTS
 // ----------------------
 
-runner.on('complete', async (workDir, task, result) => {
+// Single completion path for runner events. Composes the final message and
+// atomically replaces the running message via editMessage when possible — this
+// avoids the prior delete-then-send race where a failed send would leave the
+// user with no visible reply at all.
+async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
   stopLiveConsole(workDir);
   runner.cleanActivitySignal(workDir);
   const entry = queue.queues[workDir];
-  const label = formatLabel(entry);
+  const label = formatLabel(entry?.project, entry?.branch);
+  const output = payload.text || '';
 
-  // Delete the "Running" message
-  await poller.deleteMessage(task.runningMessageId);
-
-  const output = result.text || '';
-
-  if (task.raw) {
-    // Raw slash-command: compact "sent" confirmation, don't bump session counter.
-    // `/clear` wipes Claude's context — reset our counters too.
-    const normalized = (task.text || '').trim().toLowerCase();
-    if (normalized === '/clear') {
+  // Build header
+  let header;
+  let queueResult;
+  if (kind === 'error') {
+    header = `❌  <code>${label}</code>\nError`;
+    queueResult = `ERROR: ${payload.errorMsg}`;
+  } else if (kind === 'timeout') {
+    const reason = payload.reason || `no activity for ${payload.timeoutMin} min`;
+    header = `⏰ <code>${label}</code>\nTask forcefully stopped — ${reason}`;
+    queueResult = 'TIMEOUT';
+  } else if (task.raw) {
+    // /clear wipes Claude's context — reset our counters to match.
+    if ((task.text || '').trim().toLowerCase() === '/clear') {
       sessions.delete(workDir);
     }
-    const headerShort = `📨 <code>${label}</code>  sent <code>${escapeHtml(task.text)}</code>`;
-    const tail = output ? output.slice(-1500) : '';
-    const body = tail ? `\n\n<pre>${escapeHtml(tail)}</pre>` : '';
-    const sentId = await poller.sendMessage(headerShort + body, task.telegramMessageId);
-    if (!sentId && task.telegramMessageId) {
-      await poller.sendMessage(headerShort + body);
+    header = `📨 <code>${label}</code>  sent <code>${escapeHtml(task.text)}</code>`;
+    queueResult = output;
+  } else {
+    // Update session tracking for non-raw completions
+    const session = sessions.get(workDir) || { taskCount: 0 };
+    session.taskCount++;
+    session.lastSessionId = payload.sessionId || session.lastSessionId;
+    if (payload.contextWindow && payload.totalTokens) {
+      session.lastContextPct = Math.round((payload.totalTokens / payload.contextWindow) * 100);
     }
-    const next = queue.onTaskComplete(workDir, output);
-    if (next) {
-      startTask(workDir, next);
+    sessions.set(workDir, session);
+
+    const parts = [];
+    if (task.continueSession) {
+      parts.push(`#${session.taskCount}`);
     }
-    return;
+    if (payload.durationMs) {
+      parts.push(formatDuration(payload.durationMs));
+    }
+    if (payload.numTurns > 1) {
+      parts.push(`${payload.numTurns} turns`);
+    }
+    if (session.lastContextPct) {
+      parts.push(`ctx ${session.lastContextPct}%`);
+    }
+    if (payload.cost) {
+      parts.push(`$${payload.cost.toFixed(2)}`);
+    }
+    const info = parts.length ? `  (${parts.join(', ')})` : '';
+    const icon = task.continueSession ? '🔄' : '🆕';
+    header = `✅ ${icon} <code>${label}</code>${info}`;
+    queueResult = output;
   }
 
-  // Update session tracking
-  const session = sessions.get(workDir) || { taskCount: 0 };
-  session.taskCount++;
-  session.lastSessionId = result.sessionId || session.lastSessionId;
-  if (result.contextWindow && result.totalTokens) {
-    session.lastContextPct = Math.round((result.totalTokens / result.contextWindow) * 100);
-  }
-  sessions.set(workDir, session);
-
-  // Build session info line
-  const sessionParts = [];
-  if (task.continueSession) {
-    sessionParts.push(`#${session.taskCount}`);
-  }
-  if (result.durationMs) {
-    sessionParts.push(formatDuration(result.durationMs));
-  }
-  if (result.numTurns > 1) {
-    sessionParts.push(`${result.numTurns} turns`);
-  }
-  if (session.lastContextPct) {
-    sessionParts.push(`ctx ${session.lastContextPct}%`);
-  }
-  if (result.cost) {
-    sessionParts.push(`$${result.cost.toFixed(2)}`);
-  }
-  const sessionInfo = sessionParts.length > 0 ? `  (${sessionParts.join(', ')})` : '';
-  const sessionIcon = task.continueSession ? '🔄' : '🆕';
-
-  // Build result
-  const headerShort = `✅ ${sessionIcon} <code>${label}</code>${sessionInfo}`;
-  const headerFull = `${headerShort}\n\n${escapeHtml(task.text)}`;
+  // Build body. Long output → head+tail summary in chat plus full output as document.
+  const errPayload = kind === 'error' ? payload.errorMsg : '';
+  const visible = output || errPayload;
   let body = '';
-  if (output) {
-    if (output.length > 20000) {
-      const head = output.slice(0, 2000);
-      const tail = output.slice(-2000);
-      body = `\n\n<pre>${escapeHtml(head)}\n\n... (${output.length} chars) ...\n\n${escapeHtml(tail)}</pre>`;
-      await poller.sendDocument(
-        Buffer.from(output, 'utf-8'),
-        `result_${task.id}.txt`,
-        `Full output for: ${task.text.slice(0, 100)}`
-      );
+  let attachFullOutput = false;
+  if (visible) {
+    if (visible.length > 20000) {
+      const head = visible.slice(0, 2000);
+      const tail = visible.slice(-2000);
+      body = `\n\n<pre>${escapeHtml(head)}\n\n... (${visible.length} chars) ...\n\n${escapeHtml(tail)}</pre>`;
+      attachFullOutput = true;
     } else {
-      body = `\n\n<pre>${escapeHtml(output)}</pre>`;
+      body = `\n\n<pre>${escapeHtml(visible)}</pre>`;
     }
   }
 
-  // Try reply to original message (short header, task text visible in quote)
-  const sentId = await poller.sendMessage(headerShort + body, task.telegramMessageId);
-  if (!sentId && task.telegramMessageId) {
-    // Reply failed — original message was deleted, send without reply but with full task text
-    await poller.sendMessage(headerFull + body);
+  const finalText = header + body;
+
+  // Prefer atomic edit of the existing "Running" message — single Telegram entry,
+  // no flicker, and if the edit fails we still have the running message visible.
+  let edited = false;
+  if (task.runningMessageId) {
+    edited = await poller.editMessage(task.runningMessageId, finalText);
+  }
+  if (!edited) {
+    // Edit failed (message deleted, or text exceeds 4096 chars and Telegram refused).
+    // Send a fresh message; only delete the running one if the send succeeded.
+    const sentId = await poller.sendMessage(finalText, task.telegramMessageId);
+    if (!sentId && task.telegramMessageId) {
+      // Fall back: send without reply (original may have been deleted)
+      await poller.sendMessage(finalText);
+    }
+    if (sentId && task.runningMessageId) {
+      await poller.deleteMessage(task.runningMessageId);
+    }
   }
 
-  // Process next in queue
-  const next = queue.onTaskComplete(workDir, output);
+  if (attachFullOutput) {
+    await poller.sendDocument(
+      Buffer.from(visible, 'utf-8'),
+      `result_${task.id}.txt`,
+      `Full output for: ${task.text.slice(0, 100)}`,
+    );
+  }
+
+  const next = queue.onTaskComplete(workDir, queueResult);
   if (next) {
     startTask(workDir, next);
   }
-});
+}
 
-runner.on('error', async (workDir, task, errorMsg) => {
-  stopLiveConsole(workDir);
-  runner.cleanActivitySignal(workDir);
-  const entry = queue.queues[workDir];
-  const label = formatLabel(entry);
-
-  await poller.deleteMessage(task.runningMessageId);
-
-  const body = `\n\n<pre>${escapeHtml(errorMsg)}</pre>`;
-  const sentId = await poller.sendMessage(`❌  <code>${label}</code>\nError:${body}`, task.telegramMessageId);
-  if (!sentId && task.telegramMessageId) {
-    await poller.sendMessage(`❌  <code>${label}</code>\nError: ${escapeHtml(task.text)}${body}`);
-  }
-
-  const next = queue.onTaskComplete(workDir, `ERROR: ${errorMsg}`);
-  if (next) {
-    startTask(workDir, next);
-  }
-});
-
-runner.on('timeout', async (workDir, task) => {
-  stopLiveConsole(workDir);
-  runner.cleanActivitySignal(workDir);
-  const entry = queue.queues[workDir];
-  const label = formatLabel(entry);
-  const timeoutMin = Math.round(taskTimeout / 60000);
-
-  await poller.deleteMessage(task.runningMessageId);
-
-  const headerShort = `⏰ <code>${label}</code>\nTask forcefully stopped — no activity for ${timeoutMin} min`;
-  const headerFull = `${headerShort}: ${escapeHtml(task.text)}`;
-  const sentId = await poller.sendMessage(headerShort, task.telegramMessageId);
-  if (!sentId && task.telegramMessageId) {
-    await poller.sendMessage(headerFull);
-  }
-
-  const next = queue.onTaskComplete(workDir, 'TIMEOUT');
-  if (next) {
-    startTask(workDir, next);
-  }
-});
+runner.on('complete', (workDir, task, result) => notifyTaskCompletion(workDir, task, 'complete', result));
+runner.on('error', (workDir, task, errorMsg) => notifyTaskCompletion(workDir, task, 'error', { errorMsg }));
+runner.on('timeout', (workDir, task) => notifyTaskCompletion(workDir, task, 'timeout', {
+  timeoutMin: Math.round(taskTimeout / 60000),
+}));
 
 // ----------------------
 // HELPERS
 // ----------------------
 
-function formatLabel (entry) {
-  if (!entry) {
+function formatLabel (project, branch) {
+  if (!project) {
     return 'unknown';
   }
-  if (entry.branch && entry.branch !== 'main' && entry.branch !== 'master') {
-    return `&${entry.project}/${entry.branch}`;
+  if (branch && branch !== 'main' && branch !== 'master') {
+    return `&${project}/${branch}`;
   }
-  return `&${entry.project}`;
+  return `&${project}`;
 }
 
 function getClaudeArgs (projectAlias) {
@@ -460,48 +426,45 @@ function shouldContinueSession (workDir) {
   return sessions.has(workDir);
 }
 
-function _initJsonlReader (workDir) {
-  const sessionId = runner.getSessionId(workDir);
-  const jsonlPath = sessionId
-    ? resolveJsonlPath(workDir, sessionId)
-    : resolveJsonlByMtime(workDir);
-  if (jsonlPath) {
-    const reader = new JsonlReader(jsonlPath, logger);
-    jsonlReaders.set(workDir, reader);
-    logger.info(`JSONL reader initialized: ${jsonlPath}`);
-    return reader;
+// Source priority: JSONL (richer, structured) → PTY buffer fallback.
+// Returns short tail-content (~liveConsoleMaxOutputChars) or null.
+function getLiveContent (workDir) {
+  if (liveConsoleSource !== 'pty') {
+    let reader = jsonlReaders.get(workDir);
+    if (!reader) {
+      const sid = runner.getSessionId(workDir);
+      const jsonlPath = sid ? resolveJsonlPath(workDir, sid) : resolveJsonlByMtime(workDir);
+      if (jsonlPath) {
+        reader = new JsonlReader(jsonlPath, logger);
+        jsonlReaders.set(workDir, reader);
+        logger.info(`JSONL reader initialized: ${jsonlPath}`);
+      }
+    }
+    if (reader) {
+      reader.readNew();
+      const content = reader.getDisplayContent(jsonlMaxContentChars);
+      if (content) {
+        return content;
+      }
+    }
+    if (liveConsoleSource === 'jsonl') {
+      return null;
+    }
   }
-  return null;
-}
-
-function _getJsonlContent (workDir) {
-  let reader = jsonlReaders.get(workDir);
-  if (!reader) {
-    reader = _initJsonlReader(workDir);
-  }
-  if (!reader) {
-    return null;
-  }
-  reader.readNew();
-  return reader.getDisplayContent(jsonlMaxContentChars);
-}
-
-function _getPtyContent (workDir) {
-  const raw = runner.getBuffer(workDir);
-  if (!raw) {
-    return null;
-  }
-  const cleaned = cleanPtyOutput(raw);
+  const cleaned = cleanPtyOutput(runner.getBuffer(workDir) || '');
   if (!cleaned) {
     return null;
   }
-  const tail = cleaned.length > liveConsoleMaxOutputChars
-    ? cleaned.slice(-liveConsoleMaxOutputChars)
-    : cleaned;
-  return cleaned.length > liveConsoleMaxOutputChars
-    ? tail.slice(tail.indexOf('\n') + 1)
-    : tail;
+  if (cleaned.length <= liveConsoleMaxOutputChars) {
+    return cleaned;
+  }
+  // Trim head to a clean line boundary
+  const tail = cleaned.slice(-liveConsoleMaxOutputChars);
+  const nl = tail.indexOf('\n');
+  return nl >= 0 ? tail.slice(nl + 1) : tail;
 }
+
+const LIVE_CONSOLE_MAX_FAILS = 5;
 
 function startLiveConsole (workDir, messageId, header) {
   stopLiveConsole(workDir);
@@ -509,28 +472,29 @@ function startLiveConsole (workDir, messageId, header) {
     return;
   }
   let lastSentText = '';
+  let consecutiveFails = 0;
   const timer = setInterval(async () => {
-    try {
-      let output = null;
-      if (liveConsoleSource === 'jsonl' || liveConsoleSource === 'auto') {
-        output = _getJsonlContent(workDir);
-      }
-      if (!output && (liveConsoleSource === 'pty' || liveConsoleSource === 'auto')) {
-        output = _getPtyContent(workDir);
-      }
-      if (!output || output === lastSentText) {
-        return;
-      }
+    const output = getLiveContent(workDir);
+    if (!output || output === lastSentText) {
+      return;
+    }
+    const startedAt = new Date(runner.getActive(workDir)?.startedAt || Date.now()).getTime();
+    const elapsed = formatDuration(Date.now() - startedAt);
+    const activity = runner.getActivity(workDir);
+    const activityLine = activity && (Date.now() - activity.timestamp < 30000)
+      ? `\n<b>${escapeHtml(formatActivity(activity))}</b>`
+      : '';
+    const text = `${header}\n<i>${elapsed}</i>${activityLine}\n\n<pre>${escapeHtml(output)}</pre>`;
+    const ok = await poller.editMessage(messageId, text);
+    if (ok) {
       lastSentText = output;
-      const elapsed = formatDuration(Date.now() - new Date(runner.getActive(workDir)?.startedAt || Date.now()).getTime());
-      const activity = runner.getActivity(workDir);
-      const activityLine = activity && (Date.now() - activity.timestamp < 30000)
-        ? `\n<b>${escapeHtml(formatActivity(activity))}</b>`
-        : '';
-      const text = `${header}\n<i>${elapsed}</i>${activityLine}\n\n<pre>${escapeHtml(output)}</pre>`;
-      await poller.editMessage(messageId, text);
-    } catch (err) {
-      logger.warn(`Live console edit error: ${err.message}`);
+      consecutiveFails = 0;
+      return;
+    }
+    consecutiveFails++;
+    if (consecutiveFails >= LIVE_CONSOLE_MAX_FAILS) {
+      logger.warn(`Live console stopped for ${workDir}: ${consecutiveFails} consecutive edit failures (message likely deleted)`);
+      stopLiveConsole(workDir);
     }
   }, liveConsoleIntervalMillis);
   liveConsoleTimers.set(workDir, timer);
@@ -547,58 +511,42 @@ function stopLiveConsole (workDir) {
 
 async function startTask (workDir, task) {
   const entry = queue.queues[workDir];
-  const label = formatLabel(entry);
+  const label = formatLabel(entry?.project, entry?.branch);
   const continueSession = shouldContinueSession(workDir);
   const session = sessions.get(workDir);
 
-  // Raw slash-commands get a compact running message and skip the live console.
+  // Build running header. Raw forwards a slash-command to the live PTY; non-raw
+  // is a regular agent task with session info. Both reuse the live console so
+  // long-running raw commands (e.g. SuperClaude skills) still show progress.
+  let runningHeader;
+  let runningFull;
   if (task.raw) {
-    const runningRaw = `📨 <code>${label}</code>  sending <code>${escapeHtml(task.text)}</code>…`;
-    let runningMsgId = null;
-    if (task.telegramMessageId) {
-      runningMsgId = await poller.sendMessage(runningRaw, task.telegramMessageId);
+    runningHeader = `📨 <code>${label}</code>  sending <code>${escapeHtml(task.text)}</code>…`;
+    runningFull = runningHeader;
+  } else {
+    let sessionTag;
+    if (continueSession && session) {
+      const ctxPart = session.lastContextPct ? `, ctx ${session.lastContextPct}%` : '';
+      sessionTag = ` 🔄 #${session.taskCount + 1}${ctxPart}`;
+    } else {
+      sessionTag = ' 🆕';
     }
-    if (!runningMsgId) {
-      runningMsgId = await poller.sendMessage(runningRaw);
-    }
-    task.runningMessageId = runningMsgId;
-    const claudeArgs = applyResumeArgs(getClaudeArgs(entry?.project), workDir);
-    try {
-      runner.run(workDir, task, claudeArgs, continueSession);
-      queue.markStarted(workDir, task.pid || 0);
-    } catch (err) {
-      logger.error(`Failed to start raw task: ${err.message}`);
-      poller.sendMessage(`❌  <code>${label}</code>\nFailed to start: ${escapeHtml(err.message)}`);
-      queue.onTaskComplete(workDir, `START_ERROR: ${err.message}`);
-    }
-    return;
+    runningHeader = `⏳ <code>${label}</code>${sessionTag}\nRunning...`;
+    runningFull = `⏳ <code>${label}</code>${sessionTag}\nRunning: ${escapeHtml(task.text)}`;
   }
 
-  // Build running message with session info
-  let sessionTag = '';
-  if (continueSession && session) {
-    const ctxPart = session.lastContextPct ? `, ctx ${session.lastContextPct}%` : '';
-    sessionTag = ` 🔄 #${session.taskCount + 1}${ctxPart}`;
-  } else {
-    sessionTag = ' 🆕';
-  }
-
-  const runningShort = `⏳ <code>${label}</code>${sessionTag}\nRunning...`;
-  const runningFull = `⏳ <code>${label}</code>${sessionTag}\nRunning: ${escapeHtml(task.text)}`;
-  let runningMsgId = null;
-
-  if (task.telegramMessageId) {
-    // In replies, the quoted user message already contains task text.
-    runningMsgId = await poller.sendMessage(runningShort, task.telegramMessageId);
-    if (!runningMsgId) {
-      runningMsgId = await poller.sendMessage(runningFull);
-    }
-  } else {
+  // Reply with short header (user message is already visible in the quote).
+  // If reply target is gone, fall back to a fresh message that includes task text.
+  let runningMsgId = task.telegramMessageId
+    ? await poller.sendMessage(runningHeader, task.telegramMessageId)
+    : null;
+  if (!runningMsgId) {
     runningMsgId = await poller.sendMessage(runningFull);
   }
 
   task.runningMessageId = runningMsgId;
   startLiveConsole(workDir, runningMsgId, runningFull);
+
   const claudeArgs = applyResumeArgs(getClaudeArgs(entry?.project), workDir);
   try {
     runner.run(workDir, task, claudeArgs, continueSession);
@@ -716,9 +664,7 @@ function handleStatus (args) {
     const buttons = [];
     for (const s of statuses) {
       const branchLabel = s.branch || 'main';
-      const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
-        ? `&${target.project}/${s.branch}`
-        : `&${target.project}`;
+      const label = formatLabel(target.project, s.branch);
       if (s.active) {
         const elapsed = s.active.startedAt
           ? formatDuration(Date.now() - new Date(s.active.startedAt).getTime())
@@ -759,9 +705,7 @@ function handleStatus (args) {
     text += `\n<b>${escapeHtml(project)}</b>:`;
     for (const s of statuses) {
       const branchLabel = s.branch || 'main';
-      const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
-        ? `&${project}/${s.branch}`
-        : `&${project}`;
+      const label = formatLabel(project, s.branch);
       if (s.active) {
         const elapsed = s.active.startedAt
           ? formatDuration(Date.now() - new Date(s.active.startedAt).getTime())
@@ -797,21 +741,19 @@ function handleQueue () {
   let text = '📋 <b>Queues:</b>\n';
   for (const [project, statuses] of Object.entries(all)) {
     for (const s of statuses) {
-      const label = s.branch && s.branch !== 'main' && s.branch !== 'master'
-        ? `&${project}/${s.branch}`
-        : `&${project}`;
-      if (s.active || s.queueLength > 0) {
-        text += `\n<b>${escapeHtml(label)}</b>:`;
-        if (s.active) {
-          text += `\n  ▶ ${escapeHtml(s.active.text)}`;
-        }
-        const entry = queue.queues[Object.keys(queue.queues).find(
-          (wd) => queue.queues[wd].project === project && queue.queues[wd].branch === s.branch
-        )];
-        if (entry?.queue) {
-          for (let i = 0; i < entry.queue.length; i++) {
-            text += `\n  ${i + 1}. ${escapeHtml(entry.queue[i].text)}`;
-          }
+      if (!s.active && s.queueLength === 0) {
+        continue;
+      }
+      const label = formatLabel(project, s.branch);
+      text += `\n<b>${escapeHtml(label)}</b>:`;
+      if (s.active) {
+        text += `\n  ▶ ${escapeHtml(s.active.text)}`;
+      }
+      // s.workDir comes from queue.getProjectStatus / getAllStatus — no n^2 lookup needed.
+      const entry = s.workDir ? queue.queues[s.workDir] : null;
+      if (entry?.queue) {
+        for (let i = 0; i < entry.queue.length; i++) {
+          text += `\n  ${i + 1}. ${escapeHtml(entry.queue[i].text)}`;
         }
       }
     }
@@ -831,13 +773,13 @@ async function handleCancel (args) {
     return `❌ ${escapeHtml(err.message)}`;
   }
 
+  const label = formatLabel(projectAlias, branch);
   if (!runner.isRunning(workDir)) {
-    return `❌ No active task in &${escapeHtml(projectAlias)}${branch ? '/' + escapeHtml(branch) : ''}`;
+    return `❌ No active task in ${escapeHtml(label)}`;
   }
 
   runner.cancel(workDir);
   const next = queue.cancelActive(workDir);
-  const label = branch ? `&${projectAlias}/${branch}` : `&${projectAlias}`;
 
   if (next) {
     startTask(workDir, next);
@@ -883,7 +825,7 @@ function handleClear (args) {
   }
 
   const count = queue.clearQueue(workDir);
-  const label = branch ? `&${projectAlias}/${branch}` : `&${projectAlias}`;
+  const label = formatLabel(projectAlias, branch);
 
   // Also reset session
   sessions.delete(workDir);
@@ -905,7 +847,7 @@ function handleNewSession (args) {
     return `❌ ${escapeHtml(err.message)}`;
   }
 
-  const label = branch ? `&${projectAlias}/${branch}` : `&${projectAlias}`;
+  const label = formatLabel(projectAlias, branch);
   const session = sessions.get(workDir);
 
   sessions.delete(workDir);
@@ -1263,7 +1205,7 @@ function handlePty (args) {
     }
     const info = runner.getSessionInfo(workDir);
     if (!info) {
-      return `🖥 No PTY session for &${escapeHtml(target.project)}${target.branch ? '/' + escapeHtml(target.branch) : ''}`;
+      return `🖥 No PTY session for ${escapeHtml(formatLabel(target.project, target.branch))}`;
     }
     return formatPtyInfo(target.project, target.branch, workDir, info);
   }
@@ -1285,27 +1227,17 @@ function handlePty (args) {
 }
 
 function formatPtyInfo (project, branch, workDir, info) {
-  const label = branch && branch !== 'main' && branch !== 'master'
-    ? `&${project}/${branch}`
-    : `&${project}`;
+  const label = formatLabel(project, branch);
   const elapsed = info.startedAt
     ? formatDuration(Date.now() - new Date(info.startedAt).getTime())
     : '-';
   const liveTimer = liveConsoleTimers.has(workDir) ? '✅' : '❌';
   const hasJsonl = jsonlReaders.has(workDir) ? '✅' : '❌';
 
-  // Prefer JSONL content if available, fall back to PTY buffer
-  let lastLines = '(empty)';
-  const jsonlContent = _getJsonlContent(workDir);
-  if (jsonlContent) {
-    lastLines = jsonlContent.split('\n').slice(-15).join('\n');
-  } else {
-    const raw = runner.getBuffer(workDir);
-    const cleaned = raw ? cleanPtyOutput(raw) : '';
-    if (cleaned) {
-      lastLines = cleaned.split('\n').slice(-15).join('\n');
-    }
-  }
+  const liveContent = getLiveContent(workDir);
+  const lastLines = liveContent
+    ? liveContent.split('\n').slice(-15).join('\n')
+    : '(empty)';
 
   return `<b>${escapeHtml(label)}</b>
 State: <code>${info.state}</code>
@@ -1333,9 +1265,7 @@ async function handleSessions (args) {
   } catch (err) {
     return `❌ ${escapeHtml(err.message)}`;
   }
-  const labelTarget = target.branch && target.branch !== 'main' && target.branch !== 'master'
-    ? `&${target.project}/${target.branch}`
-    : `&${target.project}`;
+  const labelTarget = formatLabel(target.project, target.branch);
 
   const items = await listSessions(workDir, {
     limit: sessionsListLimit,
@@ -1410,9 +1340,7 @@ async function handleResumeSession (args, kill) {
   } catch (err) {
     return `❌ ${escapeHtml(err.message)}`;
   }
-  const labelTarget = target.branch && target.branch !== 'main' && target.branch !== 'master'
-    ? `&${target.project}/${target.branch}`
-    : `&${target.project}`;
+  const labelTarget = formatLabel(target.project, target.branch);
 
   const dirName = cwdToProjectDir(workDir);
   const filePath = path.join(CLAUDE_DIR, 'projects', dirName, `${sessionId}.jsonl`);
@@ -1463,9 +1391,7 @@ function handleHistory () {
   }
   let text = '📜 <b>Recent tasks:</b>\n';
   for (const h of history.reverse()) {
-    const label = h.branch && h.branch !== 'main' && h.branch !== 'master'
-      ? `&${h.project}/${h.branch}`
-      : `&${h.project}`;
+    const label = formatLabel(h.project, h.branch);
     const status = h.result === 'CANCELLED' ? '🛑' : h.result?.startsWith('ERROR') ? '❌' : '✅';
     text += `\n${status} [${escapeHtml(label)}] ${escapeHtml(h.text)}`;
   }
@@ -1598,7 +1524,7 @@ async function handleTask (parsed, telegramMessageId) {
     startTask(workDir, result.task);
   } else {
     const entry = queue.queues[workDir];
-    const label = formatLabel(entry);
+    const label = formatLabel(entry?.project, entry?.branch);
     await poller.sendMessage(
       `📋 [${escapeHtml(label)}] Queued (position ${result.position}).\n`
       + `Currently running: ${escapeHtml(result.activeTask.text)}`,
@@ -1659,7 +1585,7 @@ async function mainLoop () {
             }
           }
         } else if (parsed.type === 'task') {
-          logger.info(`Task for &${parsed.project}${parsed.branch ? '/' + parsed.branch : ''}: ${parsed.text}`);
+          logger.info(`Task for ${formatLabel(parsed.project, parsed.branch)}: ${parsed.text}`);
           await handleTask(parsed, msg.messageId);
         }
       }

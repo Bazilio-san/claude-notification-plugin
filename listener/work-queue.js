@@ -229,28 +229,6 @@ export class WorkQueue {
     return this._loadHistory().slice(-limit);
   }
 
-  /**
-   * Watchdog: clean up stale active tasks (dead PIDs, expired timeouts).
-   */
-  watchdog (taskTimeout) {
-    const now = Date.now();
-    const recovered = [];
-    for (const [workDir, entry] of Object.entries(this.queues)) {
-      if (!entry.active) {
-        continue;
-      }
-      const startedAt = entry.active.startedAt ? new Date(entry.active.startedAt).getTime() : 0;
-      const isStale = startedAt > 0 && (now - startedAt) > taskTimeout;
-
-      if (isStale) {
-        this.logger.warn(`Watchdog: stale task "${entry.active.id}" in ${workDir}`);
-        const next = this.onTaskComplete(workDir, 'STALE (watchdog cleanup)');
-        recovered.push({ workDir, next });
-      }
-    }
-    return recovered;
-  }
-
   _countTotal () {
     let count = 0;
     for (const entry of Object.values(this.queues)) {
