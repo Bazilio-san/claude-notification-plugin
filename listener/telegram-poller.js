@@ -125,9 +125,10 @@ export class TelegramPoller {
   async sendMessage (text, replyToMessageId, replyMarkup) {
     const chunks = splitMessage(text);
     let firstMessageId = null;
-    for (const chunk of chunks) {
-      const isLast = chunk === chunks[chunks.length - 1];
-      const id = await this._sendChunk(chunk, replyToMessageId, replyMarkup && isLast);
+    for (let i = 0; i < chunks.length; i++) {
+      // Inline keyboard attaches only to the final chunk
+      const markup = (replyMarkup && i === chunks.length - 1) ? replyMarkup : null;
+      const id = await this._sendChunk(chunks[i], replyToMessageId, markup);
       if (id && !firstMessageId) {
         firstMessageId = id;
       }
