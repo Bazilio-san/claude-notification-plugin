@@ -328,28 +328,25 @@ export class PtyRunner extends EventEmitter {
     const inactivityMs = task.raw ? RAW_INACTIVITY_MS : this.timeout;
     const markerPromise = this._waitForMarker(pendingId, inactivityMs, session);
 
-    // Send the task text to the PTY.
-    // Bracketed paste mode (\x1b[200~...\x1b[201~) causes Claude to hang in ConPTY,
-    // so we send raw text. For multiline messages, use backslash + Enter as line
-    // continuation (Claude Code interprets \ + Enter as a newline within the prompt),
-    // with delays between lines so Claude can process each one.
+    // Send the task text to the PTY. Bracketed paste mode (\x1b[200~...\x1b[201~)
+    // hangs claude under ConPTY, so we send raw text and submit with a CR.
+    // CRITICAL: write the text first, *then* the CR with a small delay — claude's
+    // Ink-based input handler intermittently swallows submit when the CR arrives
+    // in the same PTY write as the text. Separating them is reliable.
+    // Multiline: each non-final line ends with `\\\r` (claude treats `\` + Enter
+    // as a soft newline within the prompt), with inter-line delays so claude
+    // processes each one.
     const lines = task.text.split(/\r?\n/);
     const writeLines = async () => {
-      if (lines.length === 1) {
-        session.pty.write(`${lines[0]}\r`);
-      } else {
-        for (let i = 0; i < lines.length; i++) {
-          if (i > 0) {
-            await new Promise(r => setTimeout(r, 300));
-          }
-          if (i < lines.length - 1) {
-            session.pty.write(`${lines[i]}\\\r`);
-          } else {
-            session.pty.write(`${lines[i]}\r`);
-          }
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) {
+          await new Promise(r => setTimeout(r, 300));
         }
-        // Extra Enter to submit the multiline prompt
-        await new Promise(r => setTimeout(r, 300));
+        const isLast = i === lines.length - 1;
+        session.pty.write(isLast ? lines[i] : `${lines[i]}\\`);
+        // Submit the line. For non-final lines a soft-newline CR; for the final
+        // (or only) line, a delay then the submit CR.
+        await new Promise(r => setTimeout(r, isLast ? 300 : 0));
         session.pty.write('\r');
       }
     };
