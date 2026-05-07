@@ -875,9 +875,9 @@ async function handleClearChat (messageId) {
       break;
     }
   }
-  // Also drop the user's /clearchat command itself — works only if Telegram
-  // accepts it (e.g. bot is admin in a group); silently skipped in private chats.
-  await poller.deleteMessage(messageId);
+  // Don't delete the user's /clearchat command itself — the main loop replies
+  // to it, and a deleted reply target makes the summary fail to send. The user
+  // can wipe their own message manually.
   return `🧹 Deleted ${deleted} of ${attempted} bot messages.`;
 }
 
