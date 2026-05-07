@@ -194,10 +194,10 @@ export class TelegramPoller {
 
   async deleteMessage (messageId) {
     if (!messageId) {
-      return;
+      return false;
     }
     try {
-      await fetch(`${this.baseUrl}/deleteMessage`, {
+      const res = await fetch(`${this.baseUrl}/deleteMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -205,8 +205,11 @@ export class TelegramPoller {
           message_id: messageId,
         }),
       });
+      const data = await res.json();
+      return !!data.ok;
     } catch (err) {
       this.logger.error(`deleteMessage error: ${err.message}`);
+      return false;
     }
   }
 

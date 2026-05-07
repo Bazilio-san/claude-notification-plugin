@@ -251,6 +251,7 @@ Projects are referenced with the `&` prefix (e.g. `&api`, `&api/branch`).
 | `/cancel &project[/branch]`    | Cancel the active task               |
 | `/drop &project N`             | Remove task N from queue             |
 | `/clear &project[/branch]`     | Clear queue + reset session          |
+| `/clearchat`                   | Delete the bot's messages in this chat (private chats: bot's own; groups: all if admin) |
 | `/newsession [&project[/branch]]` | Reset session only (keep queue)   |
 | `/projects`                    | List projects and paths              |
 | `/addproject <alias> <path>`   | Register a project alias             |

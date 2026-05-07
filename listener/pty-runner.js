@@ -453,10 +453,12 @@ export class PtyRunner extends EventEmitter {
     this.logger.info(`Creating PTY session in ${workDir} with args: ${JSON.stringify(args)}`);
 
     const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
-    // Switch CMD to UTF-8 codepage (65001) so non-ASCII prompts piped via
-    // pty.write() reach claude as valid UTF-8. Without this, cmd.exe applies
-    // the system OEM codepage to the input stream and Cyrillic/CJK bytes
-    // arrive at claude mangled (`�`), so the prompt is never submitted.
+    // Switch CMD to UTF-8 codepage (65001 = UTF-8, covers all Unicode:
+    // Cyrillic, CJK, Arabic, Hebrew, accented Latin, emoji, etc.) so non-ASCII
+    // prompts piped via pty.write() reach claude as valid UTF-8. Without this,
+    // cmd.exe applies the system OEM codepage to the input stream and any
+    // multi-byte UTF-8 sequence arrives at claude mangled (`�`), so the
+    // prompt is never submitted.
     // `chcp` and `&` MUST be separate argv tokens — bundling them into one
     // string ("chcp 65001 & claude") trips cmd.exe's argument parser.
     const shellArgs = process.platform === 'win32'

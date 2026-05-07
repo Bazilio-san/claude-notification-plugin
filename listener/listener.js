@@ -608,7 +608,7 @@ function formatDuration (ms) {
 // COMMAND HANDLERS
 // ----------------------
 
-async function handleCommand (cmd, args) {
+async function handleCommand (cmd, args, messageId) {
   switch (cmd) {
     case '/status':
       return handleStatus(args);
@@ -620,6 +620,8 @@ async function handleCommand (cmd, args) {
       return handleDrop(args);
     case '/clear':
       return handleClear(args);
+    case '/clearchat':
+      return handleClearChat(messageId);
     case '/newsession':
       return handleNewSession(args);
     case '/projects':
@@ -840,6 +842,43 @@ function handleClear (args) {
   logger.info(`Session reset for ${workDir} via /clear`);
 
   return `🧹 [${escapeHtml(label)}] Queue cleared (${count} tasks), session reset`;
+}
+
+// Sweep deletes the bot's outgoing messages in the private chat. We can't
+// know the bot's message-id range, so we walk backwards from the user's
+// /clearchat command id and ask Telegram to delete each id. The bot has no
+// permission to delete the user's own messages in private chats — those
+// requests fail silently and don't count. We stop early when an entire
+// parallel batch comes back as failures (we've passed the bot's recent
+// outputs into a stretch of user-only messages, or hit the 48h delete window).
+async function handleClearChat (messageId) {
+  if (!messageId || messageId < 2) {
+    return '❌ /clearchat needs a message context';
+  }
+  const BATCH = 25;       // ≤ Telegram's 30 req/sec ceiling for a single chat
+  const MAX_LOOKBACK = 5000;
+
+  let deleted = 0;
+  let attempted = 0;
+  let cursor = messageId - 1;
+  while (cursor > 0 && attempted < MAX_LOOKBACK) {
+    const ids = [];
+    for (let i = 0; i < BATCH && cursor - i > 0; i++) {
+      ids.push(cursor - i);
+    }
+    const results = await Promise.all(ids.map((id) => poller.deleteMessage(id)));
+    attempted += results.length;
+    const ok = results.filter(Boolean).length;
+    deleted += ok;
+    cursor -= BATCH;
+    if (ok === 0) {
+      break;
+    }
+  }
+  // Also drop the user's /clearchat command itself — works only if Telegram
+  // accepts it (e.g. bot is admin in a group); silently skipped in private chats.
+  await poller.deleteMessage(messageId);
+  return `🧹 Deleted ${deleted} of ${attempted} bot messages.`;
 }
 
 function handleNewSession (args) {
@@ -1444,6 +1483,7 @@ function handleHelp () {
 /cancel [&project[/branch]] — cancel task
 /drop &project N — remove task from queue
 /clear &project[/branch] — clear queue + reset session
+/clearchat — delete the bot's messages in this chat (private chats: bot's own; groups: all if admin)
 /newsession [&project[/branch]] — reset session (keep queue)
 /projects — list projects
 /addproject &lt;alias&gt; &lt;path-or-/basename&gt; — register a project
@@ -1583,7 +1623,7 @@ async function mainLoop () {
 
         if (parsed.type === 'command') {
           logger.info(`Command: ${parsed.cmd} ${parsed.args}`);
-          const response = await handleCommand(parsed.cmd, parsed.args);
+          const response = await handleCommand(parsed.cmd, parsed.args, msg.messageId);
           if (response) {
             if (typeof response === 'object' && response.text) {
               await poller.sendMessage(response.text, msg.callbackQueryId ? null : msg.messageId, response.replyMarkup);
@@ -1616,6 +1656,7 @@ async function mainLoop () {
     { command: 'history', description: 'Recent task history' },
     { command: 'pty', description: 'PTY session diagnostics' },
     { command: 'sessions', description: 'List recent CC sessions' },
+    { command: 'clearchat', description: 'Delete the bot\'s messages in this chat' },
     { command: 'help', description: 'Show all commands' },
     { command: 'stop', description: 'Stop listener' },
   ]);
