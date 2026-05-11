@@ -1,4 +1,15 @@
 #!/usr/bin/env node
+/**
+ * Publish package to npm.
+ * Usage:
+ *   node scripts/publish.js            # bumps patch version, stages tracked modifications, commits, tags, pushes, publishes
+ *   node scripts/publish.js --no-bump  # publishes current version as-is (no bump)
+ *   node scripts/publish.js --add-all  # also stages untracked files (git add --all)
+ *   node scripts/publish.js --help
+ *
+ * Default staging behavior: `git add -u` — modified tracked files go in (incl. the bumped package.json / plugin.json).
+ * Untracked files are ignored unless --add-all is passed.
+ */
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -12,6 +23,19 @@ const y = '\x1b[33m';
 const r = '\x1b[31m';
 const g = '\x1b[32m';
 const c0 = '\x1b[0m';
+
+const args = process.argv.slice(2);
+const noBump = args.includes('--no-bump') || args.includes('-n');
+const addAll = args.includes('--add-all') || args.includes('-a');
+
+if (args.includes('--help') || args.includes('-h')) {
+  process.stdout.write(`Usage: node scripts/publish.js [--no-bump|-n] [--add-all|-a]
+  --no-bump, -n   Publish current version without bumping the patch number
+  --add-all, -a   Also stage untracked files (git add --all).
+                  By default only modified tracked files are staged (git add -u).
+`);
+  process.exit(0);
+}
 
 function log (color, msg) {
   process.stdout.write(`${color}${msg}${c0}\n`);
@@ -50,6 +74,14 @@ function setJsonVersion (filePath, newVer) {
   writeFileSync(filePath, content.replace(/("version"\s*:\s*")[\d.]+(")/,  `$1${newVer}$2`), 'utf-8');
 }
 
+function stageChanges (cwd) {
+  // -u stages modifications/deletions to tracked files (incl. the bumped package.json/plugin.json),
+  // but does NOT include untracked files. --add-all switches to `git add --all` (also untracked).
+  const stageCmd = addAll ? 'git add --all' : 'git add -u';
+  run(stageCmd, { cwd });
+  return run('git diff --cached --name-only', { cwd });
+}
+
 // ── Main ──
 
 const expectedBranch = 'master';
@@ -62,30 +94,46 @@ if (branch !== expectedBranch) {
 // 1. Bump version
 const pkg = readJson(join(projectRoot, 'package.json'));
 const oldVersion = pkg.version;
-const newVersion = bumpPatch(oldVersion);
 const repoName = pkg.name;
 
-log(c, `**** Bumping version of ${g}${repoName}${c}: ${y}${oldVersion}${c} -> ${g}${newVersion}${c} ****`);
+let newVersion;
+if (noBump) {
+  newVersion = oldVersion;
+  log(y, `**** Skipping version bump, publishing current ${g}${newVersion}${y} ****`);
+} else {
+  newVersion = bumpPatch(oldVersion);
+  log(c, `**** Bumping version of ${g}${repoName}${c}: ${y}${oldVersion}${c} -> ${g}${newVersion}${c} ****`);
 
-setJsonVersion(join(projectRoot, 'package.json'), newVersion);
+  setJsonVersion(join(projectRoot, 'package.json'), newVersion);
 
-const pluginJsonPath = join(projectRoot, '.claude-plugin', 'plugin.json');
-if (existsSync(pluginJsonPath)) {
-  setJsonVersion(pluginJsonPath, newVersion);
+  const pluginJsonPath = join(projectRoot, '.claude-plugin', 'plugin.json');
+  if (existsSync(pluginJsonPath)) {
+    setJsonVersion(pluginJsonPath, newVersion);
+  }
+
+  log(g, `  ${repoName}@${newVersion}`);
 }
 
-log(g, `  ${repoName}@${newVersion}`);
+// 2. Stage, commit & push (only if anything is staged)
+const staged = stageChanges(projectRoot);
+if (staged) {
+  run(`git commit --no-verify -m "${newVersion}"`);
+  run(`git push origin refs/heads/${expectedBranch}:${expectedBranch}`);
+  log(g, '**** Pushed commit ****');
+} else {
+  log(y, '**** Nothing staged, skipping git commit/push ****');
+}
 
-// 2. Commit & push
-run('git add -A');
-run(`git commit --no-verify -m "${newVersion}"`);
-run(`git push origin refs/heads/${expectedBranch}:${expectedBranch}`);
-log(g, '**** Pushed commit ****');
-
-// 3. Tag & push tag
-run(`git tag "v${newVersion}"`);
-run(`git push origin "v${newVersion}"`);
-log(g, `**** Tagged v${newVersion} ****`);
+// 3. Tag & push tag (idempotent: skip if tag already exists)
+const tagName = `v${newVersion}`;
+const tagExists = run(`git rev-parse -q --verify "refs/tags/${tagName}"`, { ignoreError: true });
+if (tagExists) {
+  log(y, `**** Tag ${tagName} already exists, skipping tag creation ****`);
+} else {
+  run(`git tag "${tagName}"`);
+  run(`git push origin "${tagName}"`);
+  log(g, `**** Tagged ${tagName} ****`);
+}
 
 // 4. npm publish
 log(c, '**** Publishing to npm ****');
@@ -134,10 +182,14 @@ if (existsSync(marketplacePathFile)) {
         log(g, `**** Updated marketplace README with version ${newVersion} ****`);
       }
 
-      run('git add -A', { cwd: marketplaceDir });
-      run(`git commit --no-verify -m "${mpNewVersion}"`, { cwd: marketplaceDir });
-      run('git push', { cwd: marketplaceDir });
-      log(g, '**** Marketplace pushed ****');
+      const mpStaged = stageChanges(marketplaceDir);
+      if (mpStaged) {
+        run(`git commit --no-verify -m "${mpNewVersion}"`, { cwd: marketplaceDir });
+        run('git push', { cwd: marketplaceDir });
+        log(g, '**** Marketplace pushed ****');
+      } else {
+        log(y, '**** Marketplace: nothing staged, skipping commit/push ****');
+      }
     }
   } else {
     log(y, `**** Marketplace file not found: ${marketplaceJson} ****`);
