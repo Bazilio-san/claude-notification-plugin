@@ -329,7 +329,7 @@ the same path cannot be registered twice under different aliases.
 | `projects`           | (required)            | Map of projects: `alias → { path }`                                                    |
 | `claudeArgs`         | `[]`                  | Extra CLI args for Claude (e.g. `["--permission-mode", "auto"]`)                       |
 | `continueSession`    | `true`                | Keep the PTY alive between Telegram tasks so subsequent tasks reuse the same live Claude session |
-| `resumeLastSession`  | `true`                | When spawning a fresh PTY, add `--continue` so Claude picks up the most recent JSONL in the workDir (bridges laptop CC session ↔ Telegram listener) |
+| `resumeLastSession`  | `true`                | When spawning a fresh PTY, resume the exact session whose ID the daemon captured from SessionStart (stored in `~/.claude/.session_state.json`). Survives listener restart. Falls back to a fresh session if no captured ID is available — does NOT use `--continue` blindly. |
 | `sessionsListLimit`  | `5`                   | How many most-recent sessions `/sessions` shows                                        |
 | `sessionWorkingThresholdSec` | `2`           | A locked JSONL with mtime ≤ this many seconds is considered actively writing (status `working`, resume disabled) |
 | `worktreeBaseDir`    | `~/.claude/worktrees` | Where auto-created worktrees are stored                                                |

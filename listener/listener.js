@@ -25,6 +25,11 @@ import {
 import { JsonlReader, resolveJsonlPath, resolveJsonlByMtime, cwdToProjectDir } from './jsonl-reader.js';
 import { listSessions } from './session-list.js';
 import { findLocking, killPid } from './file-locks.js';
+import {
+  getStoredSessionId,
+  setStoredSessionId,
+  clearStoredSessionId,
+} from './session-state.js';
 
 // ----------------------
 // CRASH PROTECTION
@@ -138,7 +143,25 @@ const taskLogDir = config.listener?.taskLogDir || listenerLogDir;
 fs.mkdirSync(taskLogDir, { recursive: true });
 const taskLogger = createTaskLogger(taskLogDir);
 
-const runner = new PtyRunner(logger, taskTimeout, taskLogger, taskLogDir);
+// Pass workDirs with in-flight active tasks so PtyRunner's startup cleanup
+// preserves their signal files instead of nuking the Stop hooks that fired
+// while the daemon was down.
+const activeWorkDirsOnBoot = Object.entries(queue.queues)
+  .filter(([, entry]) => entry?.active)
+  .map(([workDir]) => workDir);
+const runner = new PtyRunner(logger, taskTimeout, taskLogger, taskLogDir, activeWorkDirsOnBoot);
+
+// Capture Claude's real sessionId as soon as SessionStart fires, and persist it.
+// This is what lets the next task (or the daemon after a restart) launch with
+// `claude --resume <sid>` and continue *this exact* session — instead of
+// `--continue` picking whichever JSONL happens to have the freshest mtime.
+runner.on('ready', (workDir) => {
+  const sid = runner.getSessionId(workDir);
+  if (sid) {
+    setStoredSessionId(workDir, sid);
+    logger.info(`Captured sessionId for ${workDir}: ${sid}`);
+  }
+});
 
 const worktreeManager = new WorktreeManager(config, logger);
 
@@ -211,6 +234,41 @@ async function runWatchdog () {
   }
 }
 
+// 0. Migrate queue entries whose `project` alias no longer matches the config
+// (e.g. user renamed `mail` → `me`). Without this, /status, /cancel, and
+// completion notifications keep referring to the old alias even though the
+// workDir is unchanged.
+{
+  let migrated = 0;
+  for (const [workDir, entry] of Object.entries(queue.queues)) {
+    if (!entry) {
+      continue;
+    }
+    const normalizedWd = normalizeForCompare(workDir);
+    for (const [alias, proj] of Object.entries(listenerConfig.projects)) {
+      const projPath = typeof proj === 'string' ? proj : proj?.path;
+      if (!projPath || normalizeForCompare(projPath) !== normalizedWd) {
+        continue;
+      }
+      if (entry.project !== alias) {
+        logger.info(`Migrating queue alias for ${workDir}: ${entry.project} → ${alias}`);
+        entry.project = alias;
+        if (entry.active) {
+          entry.active.project = alias;
+        }
+        for (const t of entry.queue || []) {
+          t.project = alias;
+        }
+        migrated++;
+      }
+      break;
+    }
+  }
+  if (migrated > 0) {
+    queue._save();
+  }
+}
+
 // 1. Initial watchdog sweep on startup. Must finish before orphan recovery,
 // otherwise orphan recovery sees the stale active (still set) and re-spawns
 // the killed task while watchdog is still awaiting its Telegram notify.
@@ -268,6 +326,11 @@ async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
       session.lastContextPct = Math.round((payload.totalTokens / payload.contextWindow) * 100);
     }
     sessions.set(workDir, session);
+    // Persist the sessionId so the next task — including across a listener
+    // restart — can resume this exact session via --resume <sid>.
+    if (payload.sessionId) {
+      setStoredSessionId(workDir, payload.sessionId);
+    }
 
     const parts = [];
     if (task.continueSession) {
@@ -369,19 +432,15 @@ function getClaudeArgs (projectAlias) {
   return projectArgs.length > 0 ? projectArgs : globalClaudeArgs;
 }
 
-function hasAnyJsonl (workDir) {
-  const dirName = cwdToProjectDir(workDir);
-  const dirPath = path.join(CLAUDE_DIR, 'projects', dirName);
-  try {
-    return fs.readdirSync(dirPath).some(f => f.endsWith('.jsonl'));
-  } catch {
-    return false;
-  }
-}
-
 // Decide whether to add --continue or --resume <id> to claudeArgs for a fresh PTY.
 // Priority: explicit caller flag > pending /resume <sid> > /newsession opt-out >
-// global resumeLastSession default. If reusing an idle PTY, claudeArgs are ignored anyway.
+// persisted sessionId for this workDir > global resumeLastSession default.
+//
+// The persisted-sessionId branch is what makes "continue across listener
+// restart" deterministic: we resume the exact session whose ID we captured
+// from SessionStart, instead of letting --continue pick the most-recently-
+// modified JSONL — which may belong to a different turn or branch.
+// If reusing an idle PTY, claudeArgs are ignored anyway.
 function applyResumeArgs (claudeArgs, workDir) {
   if (claudeArgs.includes('--continue') || claudeArgs.includes('--resume')) {
     return claudeArgs;
@@ -397,8 +456,21 @@ function applyResumeArgs (claudeArgs, workDir) {
     freshSessionDirs.delete(workDir);
     return claudeArgs;
   }
-  if (resumeLastSessionEnabled && hasAnyJsonl(workDir)) {
-    return [...claudeArgs, '--continue'];
+  if (resumeLastSessionEnabled) {
+    const storedSid = getStoredSessionId(workDir);
+    if (storedSid) {
+      const dirName = cwdToProjectDir(workDir);
+      const jsonlPath = path.join(CLAUDE_DIR, 'projects', dirName, `${storedSid}.jsonl`);
+      if (fs.existsSync(jsonlPath)) {
+        return [...claudeArgs, '--resume', storedSid];
+      }
+      // Stale entry — JSONL was deleted/moved. Drop the stored sid so we
+      // don't keep retrying a dead session.
+      clearStoredSessionId(workDir);
+      logger.warn(`Stored sessionId ${storedSid} for ${workDir} has no JSONL — cleared`);
+    }
+    // No reliable sid → start fresh instead of falling back to the old
+    // mtime-based --continue lottery.
   }
   return claudeArgs;
 }
@@ -839,6 +911,7 @@ function handleClear (args) {
   // Also reset session
   sessions.delete(workDir);
   freshSessionDirs.add(workDir);
+  clearStoredSessionId(workDir);
   logger.info(`Session reset for ${workDir} via /clear`);
 
   return `🧹 [${escapeHtml(label)}] Queue cleared (${count} tasks), session reset`;
@@ -898,6 +971,7 @@ function handleNewSession (args) {
 
   sessions.delete(workDir);
   freshSessionDirs.add(workDir);
+  clearStoredSessionId(workDir);
   logger.info(`Session reset for ${workDir} via /newsession`);
 
   if (session) {

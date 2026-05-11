@@ -2,6 +2,11 @@
 node_modules/
 jspm_packages/
 
+# Per-session scratch
+resume.md
+p.md
+anthropic-skills.md
+
 # Build outputs
 dist/
 build/

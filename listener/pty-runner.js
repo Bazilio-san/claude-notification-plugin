@@ -10,6 +10,13 @@ const DEFAULT_TIMEOUT = 600_000; // 10 minutes
 // Built-in slash-commands (forwarded via %cmd) rarely emit a Stop hook event,
 // so we fall back to "done" after this much buffer inactivity.
 const RAW_INACTIVITY_MS = 8_000;
+// Fallback for tasks where the Stop hook silently doesn't fire (e.g. resumed
+// sessions on Windows ConPTY): if the PTY buffer goes quiet AND its tail shows
+// Claude's idle status bar, treat the task as complete.
+const IDLE_PROMPT_FALLBACK_MS = 60_000;
+// Status-bar marker shown by Claude when it's idle at the prompt. Covers
+// "bypass permissions on", "accept edits on", "default mode" etc.
+const IDLE_PROMPT_RE = /\b(?:bypass permissions on|accept edits on|default mode|plan mode)\b/i;
 
 /**
  * PTY-based runner for Claude Code.
@@ -17,12 +24,19 @@ const RAW_INACTIVITY_MS = 8_000;
  * receives completion signals via marker files written by the notifier hook.
  */
 export class PtyRunner extends EventEmitter {
-  constructor (logger, timeout, taskLogger, ptyLogDir) {
+  constructor (logger, timeout, taskLogger, ptyLogDir, activeWorkDirs) {
     super();
     this.logger = logger;
     this.timeout = timeout || DEFAULT_TIMEOUT;
     this.taskLogger = taskLogger || null;
     this.ptyLogDir = ptyLogDir || null;
+    // Set of normalized workDir paths whose orphan tasks are about to be
+    // re-started by listener startup logic. Their pending signal files (if any)
+    // must be preserved through the cleanup phase, otherwise we lose hook
+    // events the daemon never saw because it wasn't running yet.
+    this._preserveSignalsForWorkDirs = new Set(
+      (activeWorkDirs || []).map((wd) => this._normalizePath(wd))
+    );
     // workDir -> { pty, state, currentTask, sessionId, workDir, _pendingId, _buffer, _logStream }
     this.sessions = new Map();
     this.pendingMarkers = new Map(); // pendingId -> resolve callback
@@ -50,16 +64,35 @@ export class PtyRunner extends EventEmitter {
       // ignore
     }
 
-    // Clean up stale marker files on startup
+    // Clean up stale marker files on startup, but preserve any whose `cwd`
+    // matches a workDir with an in-flight orphan task — those signals were
+    // written by Claude while the daemon was down and are the only way to
+    // notice that the task already finished.
     try {
       const files = fs.readdirSync(PTY_SIGNAL_DIR);
       for (const f of files) {
-        if (f.endsWith('.json')) {
+        if (!f.endsWith('.json')) {
+          continue;
+        }
+        const filePath = path.join(PTY_SIGNAL_DIR, f);
+        let preserve = false;
+        if (this._preserveSignalsForWorkDirs.size > 0) {
           try {
-            fs.unlinkSync(path.join(PTY_SIGNAL_DIR, f));
+            const marker = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            if (marker?.cwd && this._preserveSignalsForWorkDirs.has(this._normalizePath(marker.cwd))) {
+              preserve = true;
+            }
           } catch {
-            // ignore
+            // unreadable — fall through and delete
           }
+        }
+        if (preserve) {
+          continue;
+        }
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          // ignore
         }
       }
     } catch {
@@ -222,7 +255,33 @@ export class PtyRunner extends EventEmitter {
       const CHECK_INTERVAL = 5000;
       const checker = setInterval(() => {
         const lastActivity = session?._lastActivityTime || 0;
-        if (lastActivity > 0 && Date.now() - lastActivity > inactivityMs) {
+        const idleMs = lastActivity > 0 ? Date.now() - lastActivity : 0;
+
+        // Idle-prompt fallback: PTY went quiet AND its tail shows Claude's
+        // idle status bar — treat as completed even if the Stop hook never
+        // produced a signal (happens with resumed sessions on Windows ConPTY).
+        if (idleMs > IDLE_PROMPT_FALLBACK_MS && session) {
+          const tailRaw = (session._buffer || '').slice(-3000);
+          const tailClean = cleanPtyOutput(tailRaw);
+          if (IDLE_PROMPT_RE.test(tailClean)) {
+            clearInterval(checker);
+            this.pendingMarkers.delete(pendingId);
+            const fullClean = cleanPtyOutput(session._buffer || '').trim();
+            const text = fullClean.length > 2000 ? fullClean.slice(-2000) : fullClean;
+            this.logger.warn(`PTY idle-prompt fallback completion in ${session.workDir} (no Stop signal in ${Math.round(idleMs / 1000)}s)`);
+            resolve({
+              lastAssistantMessage: text,
+              sessionId: session.sessionId || null,
+              cost: 0,
+              numTurns: 0,
+              durationMs: idleMs,
+              isIdleFallback: true,
+            });
+            return;
+          }
+        }
+
+        if (lastActivity > 0 && idleMs > inactivityMs) {
           clearInterval(checker);
           this.pendingMarkers.delete(pendingId);
           reject(new Error('Marker timeout'));
