@@ -416,4 +416,54 @@ function cleanPtyOutput (raw) {
   return cleaned.join('\n');
 }
 
-export { escapeHtml, stripAnsi, cleanPtyOutput };
+// Softer cleaner for *rendered* terminal screens (post xterm-headless emulation).
+// Unlike cleanPtyOutput, this preserves `❯ <command>` lines because the
+// rendered screen already reflects the final state — that prompt line is the
+// actual command echo + result, not a transient input being typed.
+function cleanRenderedScreen (rendered) {
+  if (!rendered) {
+    return '';
+  }
+  const lines = rendered.split('\n');
+  const cleaned = [];
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed.trim()) {
+      continue;
+    }
+    // Empty prompt arrow (no command on it) — drop
+    if (/^❯\s*$/.test(trimmed)) {
+      continue;
+    }
+    // Pure divider lines (≥50% box-drawing chars)
+    const specialChars = (trimmed.match(/[▐▝▘▛▜█▌▀▄░▒▓─━═╌┄│┃┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/g) || []).length;
+    if (specialChars > trimmed.length * 0.5) {
+      continue;
+    }
+    // Status bar — bypass/auto/plan permissions
+    if (/[⏵⏴]\s*[⏵⏴]?\s*(bypass|auto|plan)\s+permissions?/i.test(trimmed)) {
+      continue;
+    }
+    if (/shift\+tab\s*to\s*cycle/i.test(trimmed)) {
+      continue;
+    }
+    if (/ctrl\+[a-z]\s+to\s/i.test(trimmed)) {
+      continue;
+    }
+    // Effort indicator: "◉ xhigh · /effort"
+    if (/^\s*◉\s+\S+\s*·\s*\/effort\s*$/.test(trimmed)) {
+      continue;
+    }
+    // Help hint: "/ide for WebStorm" etc. at far-right column
+    if (/^\s+\/(ide|model|help)\s+(for|to)\s+/i.test(trimmed)) {
+      continue;
+    }
+    if (/Pasting\s*text/i.test(trimmed)) {
+      continue;
+    }
+    cleaned.push(trimmed);
+  }
+  return cleaned.join('\n');
+}
+
+export { escapeHtml, stripAnsi, cleanPtyOutput, cleanRenderedScreen };

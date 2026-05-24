@@ -4,7 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { PTY_SIGNAL_DIR } from '../bin/constants.js';
-import { cleanPtyOutput } from './telegram-poller.js';
+import { cleanRenderedScreen } from './telegram-poller.js';
+import { renderPtyScreen } from './screen-renderer.js';
 
 const DEFAULT_TIMEOUT = 600_000; // 10 minutes
 // Built-in slash-commands (forwarded via %cmd) rarely emit a Stop hook event,
@@ -253,31 +254,37 @@ export class PtyRunner extends EventEmitter {
       }
 
       const CHECK_INTERVAL = 5000;
-      const checker = setInterval(() => {
+      let idleCheckInFlight = false;
+      const checker = setInterval(async () => {
         const lastActivity = session?._lastActivityTime || 0;
         const idleMs = lastActivity > 0 ? Date.now() - lastActivity : 0;
 
         // Idle-prompt fallback: PTY went quiet AND its tail shows Claude's
         // idle status bar — treat as completed even if the Stop hook never
         // produced a signal (happens with resumed sessions on Windows ConPTY).
-        if (idleMs > IDLE_PROMPT_FALLBACK_MS && session) {
-          const tailRaw = (session._buffer || '').slice(-3000);
-          const tailClean = cleanPtyOutput(tailRaw);
-          if (IDLE_PROMPT_RE.test(tailClean)) {
-            clearInterval(checker);
-            this.pendingMarkers.delete(pendingId);
-            const fullClean = cleanPtyOutput(session._buffer || '').trim();
-            const text = fullClean.length > 2000 ? fullClean.slice(-2000) : fullClean;
-            this.logger.warn(`PTY idle-prompt fallback completion in ${session.workDir} (no Stop signal in ${Math.round(idleMs / 1000)}s)`);
-            resolve({
-              lastAssistantMessage: text,
-              sessionId: session.sessionId || null,
-              cost: 0,
-              numTurns: 0,
-              durationMs: idleMs,
-              isIdleFallback: true,
-            });
-            return;
+        // Rendering is async (xterm-headless), so guard against re-entry while
+        // an earlier tick is still rendering.
+        if (idleMs > IDLE_PROMPT_FALLBACK_MS && session && !idleCheckInFlight) {
+          idleCheckInFlight = true;
+          try {
+            const rendered = await renderPtyScreen(session._buffer || '');
+            if (IDLE_PROMPT_RE.test(rendered)) {
+              clearInterval(checker);
+              this.pendingMarkers.delete(pendingId);
+              const text = cleanRenderedScreen(rendered).trim().slice(-2000);
+              this.logger.warn(`PTY idle-prompt fallback completion in ${session.workDir} (no Stop signal in ${Math.round(idleMs / 1000)}s)`);
+              resolve({
+                lastAssistantMessage: text,
+                sessionId: session.sessionId || null,
+                cost: 0,
+                numTurns: 0,
+                durationMs: idleMs,
+                isIdleFallback: true,
+              });
+              return;
+            }
+          } finally {
+            idleCheckInFlight = false;
           }
         }
 
@@ -437,7 +444,7 @@ export class PtyRunner extends EventEmitter {
         this.taskLogger.logAnswer(task.project || 'unknown', task.branch || 'main', result.text, 0);
       }
       this.emit('complete', workDir, task, result);
-    }).catch((err) => {
+    }).catch(async (err) => {
       session.state = 'idle';
       session.currentTask = null;
 
@@ -445,7 +452,11 @@ export class PtyRunner extends EventEmitter {
         if (task.raw) {
           // Slash commands (e.g. /clear, /cost) usually don't emit a Stop hook.
           // Treat inactivity as successful completion and keep the PTY alive.
-          const cleaned = cleanPtyOutput(session._buffer || '').trim();
+          // Render through xterm-headless so the *final* screen is what we
+          // report — naive ANSI stripping leaves transient popup rows in the
+          // output even though the real terminal has redrawn over them.
+          const rendered = await renderPtyScreen(session._buffer || '');
+          const cleaned = cleanRenderedScreen(rendered).trim();
           const tail = cleaned.length > 2000 ? cleaned.slice(-2000) : cleaned;
           const result = {
             text: tail,

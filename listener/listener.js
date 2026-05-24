@@ -298,7 +298,7 @@ async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
   runner.cleanActivitySignal(workDir);
   const entry = queue.queues[workDir];
   const label = formatLabel(entry?.project, entry?.branch);
-  const output = payload.text || '';
+  let output = payload.text || '';
 
   // Build header
   let header;
@@ -311,12 +311,19 @@ async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
     header = `⏰ <code>${label}</code>\nTask forcefully stopped — ${reason}`;
     queueResult = 'TIMEOUT';
   } else if (task.raw) {
-    // /clear wipes Claude's context — reset our counters to match.
-    if ((task.text || '').trim().toLowerCase() === '/clear') {
+    const rawCmd = (task.text || '').trim().toLowerCase();
+    // /clear wipes Claude's context — reset our counters to match. The PTY
+    // buffer after /clear is just an empty prompt + status bar, so skip the
+    // body dump and report a clean confirmation instead.
+    if (rawCmd === '/clear') {
       sessions.delete(workDir);
+      header = `🧹 <code>${label}</code>  <code>/clear</code> — session reset`;
+      queueResult = '/clear';
+      output = '';
+    } else {
+      header = `📨 <code>${label}</code>  sent <code>${escapeHtml(task.text)}</code>`;
+      queueResult = output;
     }
-    header = `📨 <code>${label}</code>  sent <code>${escapeHtml(task.text)}</code>`;
-    queueResult = output;
   } else {
     // Update session tracking for non-raw completions
     const session = sessions.get(workDir) || { taskCount: 0 };
