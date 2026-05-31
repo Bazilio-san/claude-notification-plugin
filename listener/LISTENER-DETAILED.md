@@ -3,7 +3,7 @@
 Telegram Listener is a background daemon that receives tasks from a Telegram chat
 and executes them on your machine via an interactive Claude Code PTY session. The result is sent back to Telegram.
 
-**[Quick Start here](../LISTENER.md)**
+**[Quick Start here](../README.md#telegram-listener)**
 
 # Detailed Guide
 

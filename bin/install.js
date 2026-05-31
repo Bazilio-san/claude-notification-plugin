@@ -739,6 +739,11 @@ ${telegramStatus}${platformTip}
 
 Log: ${INSTALL_LOG_PATH}
 
+Listener quick start:
+  claude-notify listener setup
+  claude-notify listener start
+  claude-notify listener status
+
 To uninstall:  claude-notify uninstall
 
 To disable per project, add to .claude/settings.local.json: { "env": { "CLAUDE_NOTIFY_DISABLE": "1" } }`);

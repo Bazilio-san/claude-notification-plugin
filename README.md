@@ -5,6 +5,18 @@
 Cross-platform notifications for Claude Code task completion.
 Sends alerts to Telegram and desktop (Windows, macOS, Linux) when Claude finishes working.
 
+## Start Here (Listener)
+
+If you want Telegram-first remote control, start with the Listener daemon:
+
+```bash
+claude-notify listener setup
+claude-notify listener start
+claude-notify listener status
+```
+
+Deep internals and troubleshooting: [Detailed Guide](listener/LISTENER-DETAILED.md)
+
 
 ## Features
 

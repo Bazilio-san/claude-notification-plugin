@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A cross-platform Claude Code hooks plugin that sends notifications (Telegram, desktop toast, sound, voice) when Claude finishes a task. Supports Windows, macOS, and Linux. Distributed as a global npm package with automatic postinstall, and as a Claude Code plugin (`.claude-plugin/plugin.json` + `hooks/hooks.json`).
+A cross-platform Claude Code hooks plugin that sends notifications (Telegram, desktop toast, sound, voice) when Claude finishes a task. Supports Windows, macOS, and Linux. Distributed as a global npm package with automatic postinstall, and as a Claude Code plugin (`.claude-plugin/plugin.json` + `hooks/hooks.json`). Critical runtime component: Telegram Listener daemon (`bin/listener-cli.js` + `listener/listener.js`).
 
 ## Commands
 
@@ -13,13 +13,21 @@ npm run lint          # ESLint check
 npm run lint:fix      # ESLint auto-fix
 ```
 
+## First Look Checklist
+
+1. `README.md` → `Telegram Listener` section
+2. `bin/cli.js` → top-level command routing
+3. `bin/listener-cli.js` → daemon lifecycle (`setup/start/status/logs/restart`)
+4. `listener/listener.js` → long-poll loop, queueing, PTY orchestration
+5. `listener/LISTENER-DETAILED.md` → deep internals/troubleshooting
+
 No test framework is configured. No build step — source JS is shipped directly.
 
 ## Architecture
 
 Single `bin` entry in package.json:
 
-- **`bin/cli.js`** (`claude-notify`) — Unified entry point. Subcommands: `install`, `uninstall`, `listener <action>`. When called with no args and stdin piped (hook mode), delegates to `notifier/notifier.js` which reads JSON from stdin (Claude hook event), manages a timer via state file, and dispatches notifications.
+- **`bin/cli.js`** (`claude-notify`) — Unified entry point. Subcommands: `listener <action>`, `install`, `uninstall`. When called with no args and stdin piped (hook mode), delegates to `notifier/notifier.js` which reads JSON from stdin (Claude hook event), manages a timer via state file, and dispatches notifications.
 
 Supporting modules (not in `bin`, called by the dispatcher):
 - **`bin/install.js`** — Plugin registration, Telegram config, hooks, CLI wrapper. Also runs as `postinstall`.

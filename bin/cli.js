@@ -32,10 +32,11 @@ switch (command) {
       console.log(`Usage: claude-notify <command> [options]
 
 Commands:
+  listener <action>    Manage the Telegram Listener daemon
+                       Actions: start, stop, status, logs, restart
   install              Setup plugin registration, Telegram config, hooks
   uninstall            Remove plugin, hooks, config, CLI wrappers
-  listener <action>    Manage the Telegram Listener daemon
-                       Actions: start, stop, status, logs, restart`);
+`);
       process.exit(command ? 1 : 0);
     }
 }
