@@ -124,6 +124,22 @@ function stopListenerIfRunning () {
   return stopped;
 }
 
+function restartListenerIfStoppedByInstaller () {
+  try {
+    const listenerCliPath = path.join(PACKAGE_ROOT, 'bin', 'listener-cli.js');
+    execSync(`"${process.execPath}" "${listenerCliPath}" start`, {
+      stdio: 'pipe',
+      windowsHide: true,
+    });
+    console.log('  Listener daemon restarted');
+    return true;
+  } catch {
+    console.warn('  Warning: failed to restart listener automatically.');
+    console.warn('  Run "claude-notify listener start" manually.');
+    return false;
+  }
+}
+
 const CLI_BIN_NAME = 'claude-notify';
 const CLI_BIN_TARGET = 'bin/cli.js';
 
@@ -608,7 +624,7 @@ Send any message to your bot in Telegram, then press Enter.\x1b[0m`);
     const telegramMsg = token && chatId
       ? 'Telegram: using existing config.'
       : 'Interactive setup skipped. Run "claude-notify install" to configure.';
-    console.log(`\nNon-interactive install (stdin is not a terminal).\n${telegramMsg}`);
+  console.log(`\nNon-interactive install (stdin is not a terminal).\n${telegramMsg}`);
   }
 
   // 3. Write config
@@ -747,6 +763,10 @@ Listener quick start:
 To uninstall:  claude-notify uninstall
 
 To disable per project, add to .claude/settings.local.json: { "env": { "CLAUDE_NOTIFY_DISABLE": "1" } }`);
+
+  if (listenerWasStopped) {
+    restartListenerIfStoppedByInstaller();
+  }
 
   closeLog();
 }

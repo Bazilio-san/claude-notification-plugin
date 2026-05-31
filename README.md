@@ -49,6 +49,7 @@ npm install -g claude-notification-plugin --foreground-scripts
 
 If npm install was run without the --foreground-scripts switch, or if you need to reconfigure
 The installer prompts for Telegram bot credentials and sets everything up.
+If listener daemon was running before install/reinstall, installer stops it during update and starts it back automatically at the end.
 
 ```bash
 claude-notify install
