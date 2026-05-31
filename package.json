@@ -1,7 +1,7 @@
 {
   "name": "claude-notification-plugin",
   "productName": "claude-notification-plugin",
-  "version": "1.1.105",
+  "version": "1.1.106",
   "description": "Claude Code task-completion notifications: Telegram, desktop notifications (Windows/macOS/Linux), sound, and voice",
   "type": "module",
   "engines": {
@@ -29,7 +29,10 @@
     "listener:restart": "claude-notify listener restart",
     "listener:stop": "claude-notify listener stop",
     "listener:start": "claude-notify listener start",
-    "listener:status": "claude-notify listener status"
+    "listener:status": "claude-notify listener status",
+    "agents:link": "node scripts/claude-2-agents-symlink.js setup",
+    "agents:link:status": "node scripts/claude-2-agents-symlink.js status",
+    "agents:link:remove": "node scripts/claude-2-agents-symlink.js remove"
   },
   "keywords": [
     "claude",

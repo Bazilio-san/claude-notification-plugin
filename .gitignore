@@ -98,3 +98,6 @@ glm.sh
 /_test_webhook_server/
 /commit-sha
 /single-test-template/
+/.agents/
+/.qwen/
+/out/
