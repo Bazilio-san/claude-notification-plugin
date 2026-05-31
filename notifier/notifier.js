@@ -218,6 +218,7 @@ function writeErrorSignalFile (event) {
   const sessionId = event.session_id || 'unknown';
   writeSignalFile(`err_${sessionId}.json`, {
     type: 'error',
+    sessionId,
     cwd: event.cwd || process.cwd(),
     error: event.error || 'unknown',
     errorDetails: event.error_details || '',
@@ -413,8 +414,11 @@ async function sendTelegram (config, state) {
   }
 
   // Delete old messages
-  const maxAge = (config.telegram.deleteAfterHours || 24) * 3600_000;
-  if (state.sentMessages?.length) {
+  const deleteAfter = Number(config.telegram.deleteAfterHours);
+  const maxAge = Number.isFinite(deleteAfter) && deleteAfter > 0
+    ? deleteAfter * 3600_000
+    : 0;
+  if (maxAge > 0 && state.sentMessages?.length) {
     const now = Date.now();
     const keep = [];
     for (const msg of state.sentMessages) {

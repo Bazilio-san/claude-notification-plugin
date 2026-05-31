@@ -154,6 +154,8 @@ export class PtyRunner extends EventEmitter {
       } else if (type === 'error') {
         // StopFailure — emit error, abort task
         this._unlinkSafe(filePath);
+        const errorSignalSessionId = marker.sessionId
+          || (f.startsWith('err_') ? f.slice(4, -5) : null);
         for (const [workDir, session] of this.sessions) {
           if (session.state === 'busy' && this._normalizePath(session.workDir) === this._normalizePath(cwd)) {
             if (session._pendingId && this.pendingMarkers.has(session._pendingId)) {
@@ -164,11 +166,22 @@ export class PtyRunner extends EventEmitter {
             session.currentTask = null;
             this._destroyPty(workDir);
             const errorMsg = `API error: ${marker.error}${marker.errorDetails ? ' — ' + marker.errorDetails : ''}`;
+            const resumeMatch = (marker.errorDetails || marker.lastAssistantMessage || '')
+              .match(/(?:^|\s)--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+            const resumeSessionId = resumeMatch?.[1] || null;
             this.logger.error(`Hook signal: ${errorMsg} in ${workDir}`);
             if (this.taskLogger) {
               this.taskLogger.logAnswer(task?.project || 'unknown', task?.branch || 'main', errorMsg, 1);
             }
-            this.emit('error', workDir, task, errorMsg);
+            this.emit('error', workDir, task, {
+              message: errorMsg,
+              sessionId: errorSignalSessionId && errorSignalSessionId !== 'unknown'
+                ? errorSignalSessionId
+                : null,
+              resumeSessionId,
+              errorType: marker.error || 'unknown',
+              errorDetails: marker.errorDetails || '',
+            });
             break;
           }
         }

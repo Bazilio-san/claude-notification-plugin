@@ -8,7 +8,7 @@ const MAX_MESSAGE_LENGTH = 4096;
 const MAX_CONSECUTIVE_409 = 8;
 
 export class TelegramPoller {
-  constructor (token, chatId, logger) {
+  constructor (token, chatId, logger, options = {}) {
     this.token = token;
     this.chatId = String(chatId);
     this.logger = logger;
@@ -17,6 +17,11 @@ export class TelegramPoller {
     this._errorBackoff = 0; // current backoff in ms (0 = no backoff)
     this._consecutiveErrors = 0;
     this._consecutive409 = 0;
+    const deleteAfterHours = Number(options.deleteAfterHours);
+    this._deleteAfterMs = Number.isFinite(deleteAfterHours) && deleteAfterHours > 0
+      ? deleteAfterHours * 3600_000
+      : 0;
+    this._sentMessages = [];
   }
 
   async flush () {
@@ -154,7 +159,10 @@ export class TelegramPoller {
       });
       let data = await res.json();
       if (data.ok) {
-        return data.result.message_id;
+        const messageId = data.result.message_id;
+        this._trackSentMessage(messageId);
+        await this._cleanupOldMessages();
+        return messageId;
       }
       const htmlErr = data.description || `error_code ${data.error_code}`;
       // Retry without HTML parse mode (covers entity-parsing errors)
@@ -166,7 +174,10 @@ export class TelegramPoller {
       data = await res.json();
       if (data.ok) {
         this.logger.warn(`sendMessage: HTML failed (${htmlErr}), plain succeeded`);
-        return data.result.message_id;
+        const messageId = data.result.message_id;
+        this._trackSentMessage(messageId);
+        await this._cleanupOldMessages();
+        return messageId;
       }
       this.logger.error(`sendMessage failed: HTML=${htmlErr}, plain=${data.description || data.error_code}`);
       return null;
@@ -270,13 +281,47 @@ export class TelegramPoller {
       if (caption) {
         formData.append('caption', caption.slice(0, 1024));
       }
-      await fetch(`${this.baseUrl}/sendDocument`, {
+      const res = await fetch(`${this.baseUrl}/sendDocument`, {
         method: 'POST',
         body: formData,
       });
+      const data = await res.json();
+      if (data.ok && data.result?.message_id) {
+        this._trackSentMessage(data.result.message_id);
+        await this._cleanupOldMessages();
+      }
     } catch (err) {
       this.logger.error(`sendDocument error: ${err.message}`);
     }
+  }
+
+  _trackSentMessage (messageId) {
+    if (!messageId || this._deleteAfterMs <= 0) {
+      return;
+    }
+    this._sentMessages.push({
+      id: messageId,
+      ts: Date.now(),
+    });
+    if (this._sentMessages.length > 1000) {
+      this._sentMessages = this._sentMessages.slice(-500);
+    }
+  }
+
+  async _cleanupOldMessages () {
+    if (this._deleteAfterMs <= 0 || this._sentMessages.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const keep = [];
+    for (const msg of this._sentMessages) {
+      if (now - msg.ts > this._deleteAfterMs) {
+        await this.deleteMessage(msg.id);
+      } else {
+        keep.push(msg);
+      }
+    }
+    this._sentMessages = keep;
   }
 }
 

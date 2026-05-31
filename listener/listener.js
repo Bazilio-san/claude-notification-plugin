@@ -133,7 +133,9 @@ const resumeLastSessionEnabled = listenerConfig.resumeLastSession !== false; // 
 const sessionsListLimit = listenerConfig.sessionsListLimit || 5;
 const sessionWorkingThresholdSec = listenerConfig.sessionWorkingThresholdSec || 2;
 
-const poller = new TelegramPoller(token, chatId, logger);
+const poller = new TelegramPoller(token, chatId, logger, {
+  deleteAfterHours: config.telegram?.deleteAfterHours,
+});
 const queue = new WorkQueue(
   logger,
   listenerConfig.maxQueuePerWorkDir || 10,
@@ -304,7 +306,14 @@ async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
   let header;
   let queueResult;
   if (kind === 'error') {
-    header = `❌  <code>${label}</code>\nError`;
+    const resumeSid = payload.resumeSessionId || payload.sessionId || null;
+    if (resumeSid) {
+      setStoredSessionId(workDir, resumeSid);
+    }
+    const resumeHint = resumeSid
+      ? `\nSaved session: <code>${resumeSid}</code>\nNext task for this target will auto-resume it.`
+      : '';
+    header = `❌  <code>${label}</code>\nError${resumeHint}`;
     queueResult = `ERROR: ${payload.errorMsg}`;
   } else if (kind === 'timeout') {
     const reason = payload.reason || `no activity for ${payload.timeoutMin} min`;
@@ -413,7 +422,17 @@ async function notifyTaskCompletion (workDir, task, kind, payload = {}) {
 }
 
 runner.on('complete', (workDir, task, result) => notifyTaskCompletion(workDir, task, 'complete', result));
-runner.on('error', (workDir, task, errorMsg) => notifyTaskCompletion(workDir, task, 'error', { errorMsg }));
+runner.on('error', (workDir, task, errorData) => {
+  if (typeof errorData === 'string') {
+    notifyTaskCompletion(workDir, task, 'error', { errorMsg: errorData });
+    return;
+  }
+  notifyTaskCompletion(workDir, task, 'error', {
+    errorMsg: errorData?.message || 'Unknown error',
+    sessionId: errorData?.sessionId || null,
+    resumeSessionId: errorData?.resumeSessionId || null,
+  });
+});
 runner.on('timeout', (workDir, task) => notifyTaskCompletion(workDir, task, 'timeout', {
   timeoutMin: Math.round(taskTimeout / 60000),
 }));
