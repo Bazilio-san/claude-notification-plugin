@@ -135,6 +135,7 @@ const sessionWorkingThresholdSec = listenerConfig.sessionWorkingThresholdSec || 
 
 const poller = new TelegramPoller(token, chatId, logger, {
   deleteAfterHours: config.telegram?.deleteAfterHours,
+  stateFilePath: path.join(CLAUDE_DIR, '.listener-telegram-messages.json'),
 });
 const queue = new WorkQueue(
   logger,

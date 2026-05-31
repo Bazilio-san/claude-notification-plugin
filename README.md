@@ -130,7 +130,7 @@ ENV: `CLAUDE_NOTIFY_TELEGRAM_TOKEN`
 **telegram.chatId** — Chat ID to send messages to.
 ENV: `CLAUDE_NOTIFY_TELEGRAM_CHAT_ID`
 
-**telegram.deleteAfterHours** — Auto-delete old Telegram messages after N hours (applies to notifier and listener bot messages). `0` to disable. Default: **24**
+**telegram.deleteAfterHours** — Auto-delete old Telegram messages after N hours (applies to notifier and listener bot messages). Listener tracks message IDs in `~/.claude/.listener-telegram-messages.json`, so cleanup survives daemon restarts. `0` to disable. Default: **24**
 
 **telegram.includeLastCcMessageInTelegram** — Append Claude's last message to the notification (truncated to 3500 chars). Default: **true**
 ENV: `CLAUDE_NOTIFY_INCLUDE_LAST_CC_MESSAGE_IN_TELEGRAM`

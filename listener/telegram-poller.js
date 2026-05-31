@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import fs from 'fs';
+import path from 'path';
+
 const POLL_TIMEOUT = 30; // seconds
 const MAX_MESSAGE_LENGTH = 4096;
 // Telegram allows exactly one getUpdates consumer per token. If we keep seeing
@@ -21,7 +24,11 @@ export class TelegramPoller {
     this._deleteAfterMs = Number.isFinite(deleteAfterHours) && deleteAfterHours > 0
       ? deleteAfterHours * 3600_000
       : 0;
+    this._stateFilePath = typeof options.stateFilePath === 'string' ? options.stateFilePath : '';
     this._sentMessages = [];
+    this._lastCleanupAt = 0;
+    this._cleanupIntervalMs = 60_000;
+    this._loadTrackedMessages();
   }
 
   async flush () {
@@ -38,6 +45,11 @@ export class TelegramPoller {
   }
 
   async getUpdates () {
+    if (this._deleteAfterMs > 0 && (Date.now() - this._lastCleanupAt) >= this._cleanupIntervalMs) {
+      this._lastCleanupAt = Date.now();
+      await this._cleanupOldMessages();
+    }
+
     // Apply backoff delay if we've had consecutive errors
     if (this._errorBackoff > 0) {
       await new Promise((resolve) => setTimeout(resolve, this._errorBackoff));
@@ -306,6 +318,7 @@ export class TelegramPoller {
     if (this._sentMessages.length > 1000) {
       this._sentMessages = this._sentMessages.slice(-500);
     }
+    this._saveTrackedMessages();
   }
 
   async _cleanupOldMessages () {
@@ -321,7 +334,46 @@ export class TelegramPoller {
         keep.push(msg);
       }
     }
-    this._sentMessages = keep;
+    if (keep.length !== this._sentMessages.length) {
+      this._sentMessages = keep;
+      this._saveTrackedMessages();
+    } else {
+      this._sentMessages = keep;
+    }
+  }
+
+  _loadTrackedMessages () {
+    if (this._deleteAfterMs <= 0 || !this._stateFilePath) {
+      return;
+    }
+    try {
+      if (!fs.existsSync(this._stateFilePath)) {
+        return;
+      }
+      const raw = JSON.parse(fs.readFileSync(this._stateFilePath, 'utf-8'));
+      const list = Array.isArray(raw?.messages) ? raw.messages : [];
+      this._sentMessages = list
+        .filter((m) => Number.isInteger(m?.id) && Number.isFinite(m?.ts))
+        .map((m) => ({ id: m.id, ts: m.ts }))
+        .slice(-1000);
+    } catch (err) {
+      this.logger.warn(`listener message tracker load failed: ${err.message}`);
+      this._sentMessages = [];
+    }
+  }
+
+  _saveTrackedMessages () {
+    if (this._deleteAfterMs <= 0 || !this._stateFilePath) {
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(this._stateFilePath), { recursive: true });
+      const tmp = `${this._stateFilePath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ messages: this._sentMessages }, null, 2));
+      fs.renameSync(tmp, this._stateFilePath);
+    } catch (err) {
+      this.logger.warn(`listener message tracker save failed: ${err.message}`);
+    }
   }
 }
 
